@@ -16,7 +16,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.nutriapp.ui.components.*
-import com.nutriapp.ui.theme.*
 
 data class DayCalories(val label: String, val kcal: Int, val isHighlighted: Boolean = false)
 
@@ -38,7 +37,7 @@ fun InformeScreen(
     onNavigate: (NavDestination) -> Unit = {}
 ) {
     Scaffold(
-        containerColor = CreamBackground,
+        containerColor = MaterialTheme.colorScheme.surface,
         bottomBar = { AppBottomBar(selected = NavDestination.Inicio, onSelect = onNavigate) }
     ) { padding ->
         Column(
@@ -52,16 +51,38 @@ fun InformeScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Resumen semanal", style = MaterialTheme.typography.headlineLarge, color = TextPrimary)
-                Text(weekRange, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                Text(
+                    "Resumen semanal",
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(weekRange, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Spacer(Modifier.height(16.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SummaryPill("$avgKcal", "PROMEDIO/DÍA", CardDark, TextOnDark, Modifier.weight(1f))
-                SummaryPill(bestDay, "MEJOR DÍA", OrangeAccentLight, OrangeAccent, Modifier.weight(1f))
-                SummaryPill("$streakDays", "RACHA\nACTIVA", YellowAccentLight, YellowAccent, Modifier.weight(1f))
+                SummaryPill(
+                    "$avgKcal",
+                    "PROMEDIO/DÍA",
+                    MaterialTheme.colorScheme.inverseSurface,
+                    MaterialTheme.colorScheme.inverseOnSurface,
+                    Modifier.weight(1f)
+                )
+                SummaryPill(
+                    bestDay,
+                    "MEJOR DÍA",
+                    MaterialTheme.colorScheme.primaryContainer,
+                    MaterialTheme.colorScheme.primary,
+                    Modifier.weight(1f)
+                )
+                SummaryPill(
+                    "$streakDays",
+                    "RACHA\nACTIVA",
+                    MaterialTheme.colorScheme.tertiaryContainer,
+                    MaterialTheme.colorScheme.tertiary,
+                    Modifier.weight(1f)
+                )
             }
 
             Spacer(Modifier.height(24.dp))
@@ -77,11 +98,11 @@ fun InformeScreen(
                 )
                 Spacer(Modifier.width(20.dp))
                 Column {
-                    LegendRow("Carbos $macroCarbsPct%", OrangeAccent)
+                    LegendRow("Carbos $macroCarbsPct%", MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(8.dp))
-                    LegendRow("Proteína $macroProteinPct%", GreenAccent)
+                    LegendRow("Proteína $macroProteinPct%", MaterialTheme.colorScheme.secondary)
                     Spacer(Modifier.height(8.dp))
-                    LegendRow("Grasas $macroFatPct%", YellowAccent)
+                    LegendRow("Grasas $macroFatPct%", MaterialTheme.colorScheme.tertiary)
                 }
             }
 
@@ -98,7 +119,7 @@ fun InformeScreen(
 private fun SummaryPill(value: String, label: String, bg: Color, fg: Color, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
+            .clip(MaterialTheme.shapes.large)
             .background(bg)
             .padding(vertical = 14.dp, horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -124,7 +145,7 @@ private fun LegendRow(text: String, color: Color) {
                 .background(color)
         )
         Spacer(Modifier.width(8.dp))
-        Text(text, style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
@@ -138,6 +159,10 @@ private fun DonutChart(
     centerLabel: String,
     modifier: Modifier = Modifier
 ) {
+    // Los colores se leen fuera del bloque draw (DrawScope no es composable).
+    val primary = MaterialTheme.colorScheme.primary
+    val secondary = MaterialTheme.colorScheme.secondary
+    val tertiary = MaterialTheme.colorScheme.tertiary
     Box(modifier, contentAlignment = Alignment.Center) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val strokeWidth = size.minDimension * 0.16f
@@ -150,9 +175,9 @@ private fun DonutChart(
             var startAngle = -90f
 
             val segments = listOf(
-                carbsPct to OrangeAccent,
-                proteinPct to GreenAccent,
-                fatPct to YellowAccent
+                carbsPct to primary,
+                proteinPct to secondary,
+                fatPct to tertiary
             )
             segments.forEach { (pct, color) ->
                 val sweep = 360f * (pct / 100f)
@@ -169,8 +194,8 @@ private fun DonutChart(
             }
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(centerValue, style = MaterialTheme.typography.titleLarge, color = TextPrimary)
-            Text(centerLabel, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            Text(centerValue, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text(centerLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -201,11 +226,14 @@ private fun WeeklyBarChart(days: List<DayCalories>, goalKcal: Int, modifier: Mod
                             .fillMaxWidth(0.6f)
                             .fillMaxHeight(heightFraction.coerceIn(0.05f, 1f))
                             .clip(RoundedCornerShape(6.dp))
-                            .background(if (day.isHighlighted) OrangeAccent else ChipInactiveBg)
+                            .background(
+                                if (day.isHighlighted) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.surfaceContainerHighest
+                            )
                     )
                 }
                 Spacer(Modifier.height(6.dp))
-                Text(day.label, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                Text(day.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

@@ -19,14 +19,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nutriapp.ui.components.*
-import com.nutriapp.ui.theme.*
 
 data class MealEntry(
     val emoji: String,
     val name: String,
     val meta: String,
     val kcal: Int,
-    val iconBg: androidx.compose.ui.graphics.Color = YellowAccentLight
+    val iconBg: androidx.compose.ui.graphics.Color? = null
 )
 
 /**
@@ -48,7 +47,7 @@ fun InicioScreen(
     onNavigate: (NavDestination) -> Unit = {}
 ) {
     Scaffold(
-        containerColor = CreamBackground,
+        containerColor = MaterialTheme.colorScheme.surface,
         bottomBar = { AppBottomBar(selected = NavDestination.Inicio, onSelect = onNavigate) },
         floatingActionButton = { OrangeFab(onClick = onAddMeal) }
     ) { padding ->
@@ -60,8 +59,12 @@ fun InicioScreen(
             contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp)
         ) {
             item {
-                Text(userName, style = MaterialTheme.typography.displayLarge, color = TextPrimary)
-                Text(dateLabel.uppercase(), style = MaterialTheme.typography.labelLarge, color = TextSecondary)
+                Text(userName, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.onSurface)
+                Text(
+                    dateLabel.uppercase(),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(Modifier.height(24.dp))
             }
 
@@ -73,12 +76,12 @@ fun InicioScreen(
                     Text(
                         "$kcalConsumed",
                         style = MaterialTheme.typography.displayLarge.copy(fontSize = 48.sp),
-                        color = TextPrimary
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         "de $kcalGoal kcal",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Spacer(Modifier.height(24.dp))
@@ -89,9 +92,9 @@ fun InicioScreen(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    MacroStat(label = "CARBOS", value = "${carbsG}g", color = OrangeAccent, modifier = Modifier.weight(1f))
-                    MacroStat(label = "PROTEÍNA", value = "${proteinG}g", color = GreenAccent, modifier = Modifier.weight(1f))
-                    MacroStat(label = "GRASAS", value = "${fatG}g", color = YellowAccent, modifier = Modifier.weight(1f))
+                    MacroStat(label = "CARBOS", value = "${carbsG}g", color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                    MacroStat(label = "PROTEÍNA", value = "${proteinG}g", color = MaterialTheme.colorScheme.secondary, modifier = Modifier.weight(1f))
+                    MacroStat(label = "GRASAS", value = "${fatG}g", color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(28.dp))
             }
@@ -100,7 +103,7 @@ fun InicioScreen(
                 Text(
                     "Lo de hoy",
                     style = MaterialTheme.typography.headlineMedium,
-                    color = TextPrimary
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -120,7 +123,7 @@ fun InicioScreen(
 }
 
 private fun defaultMeals() = listOf(
-    MealEntry("🥐", "Arepa de choclo", "DESAYUNO · 7:20 AM", 210, OrangeAccentLight),
-    MealEntry("🍲", "Sancocho de gallina", "ALMUERZO · 12:45 PM", 480, GreenAccentLight),
-    MealEntry("🥭", "Jugo de mango biche", "SNACK · 3:10 PM", 130, YellowAccentLight)
+    MealEntry("🥐", "Arepa de choclo", "DESAYUNO · 7:20 AM", 210),
+    MealEntry("🍲", "Sancocho de gallina", "ALMUERZO · 12:45 PM", 480),
+    MealEntry("🥭", "Jugo de mango biche", "SNACK · 3:10 PM", 130)
 )

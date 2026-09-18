@@ -19,7 +19,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.nutriapp.ui.components.*
-import com.nutriapp.ui.theme.*
 
 data class FoodResult(
     val emoji: String,
@@ -27,7 +26,7 @@ data class FoodResult(
     val origin: String,
     val kcal: Int,
     val unitLabel: String = "kcal / ud",
-    val iconBg: androidx.compose.ui.graphics.Color = YellowAccentLight
+    val iconBg: androidx.compose.ui.graphics.Color? = null
 )
 
 /**
@@ -46,7 +45,7 @@ fun AgregarScreen(
     var selectedCategory by remember { mutableStateOf(categories.first()) }
 
     Scaffold(
-        containerColor = CreamBackground,
+        containerColor = MaterialTheme.colorScheme.surface,
         bottomBar = { AppBottomBar(selected = NavDestination.Diario, onSelect = onNavigate) },
         floatingActionButton = { OrangeFab(onClick = onAddMeal) }
     ) { padding ->
@@ -56,30 +55,40 @@ fun AgregarScreen(
                 .padding(padding)
                 .padding(horizontal = 20.dp, vertical = 16.dp)
         ) {
-            Text("¿Qué comiste?", style = MaterialTheme.typography.headlineLarge, color = TextPrimary)
+            Text(
+                "¿Qué comiste?",
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
             Spacer(Modifier.height(16.dp))
 
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
                 placeholder = { Text("Busca arepa, ajiaco, buñuelo...") },
-                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null, tint = TextSecondary) },
+                leadingIcon = {
+                    Icon(Icons.Outlined.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                },
                 trailingIcon = {
                     Box(
                         Modifier
                             .size(36.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(CardDark),
+                            .background(MaterialTheme.colorScheme.inverseSurface),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Outlined.List, contentDescription = "Filtros", tint = TextOnDark)
+                        Icon(
+                            Icons.Outlined.List,
+                            contentDescription = "Filtros",
+                            tint = MaterialTheme.colorScheme.inverseOnSurface
+                        )
                     }
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(16.dp),
+                shape = MaterialTheme.shapes.large,
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = OrangeAccent,
-                    unfocusedBorderColor = Divider
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
                 ),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -94,12 +103,12 @@ fun AgregarScreen(
                         Modifier
                             .size(8.dp)
                             .clip(CircleShape)
-                            .background(GreenAccent)
+                            .background(MaterialTheme.colorScheme.secondary)
                     )
                 },
                 colors = AssistChipDefaults.assistChipColors(
-                    containerColor = GreenAccentLight,
-                    labelColor = GreenAccent
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    labelColor = MaterialTheme.colorScheme.secondary
                 ),
                 border = null
             )
@@ -132,7 +141,7 @@ private fun FoodResultRow(food: FoodResult, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(MaterialTheme.shapes.large)
             .clickable(onClick = onClick)
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -141,26 +150,30 @@ private fun FoodResultRow(food: FoodResult, onClick: () -> Unit) {
             Modifier
                 .size(48.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(food.iconBg),
+                .background(food.iconBg ?: MaterialTheme.colorScheme.tertiaryContainer),
             contentAlignment = Alignment.Center
         ) {
             Text(food.emoji, fontSize = androidx.compose.ui.unit.TextUnit(20f, androidx.compose.ui.unit.TextUnitType.Sp))
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(food.name, style = MaterialTheme.typography.titleLarge, color = TextPrimary)
-            Text(food.origin.uppercase(), style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            Text(food.name, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                food.origin.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         Column(horizontalAlignment = Alignment.End) {
-            Text("${food.kcal}", style = MaterialTheme.typography.titleLarge, color = TextPrimary)
-            Text(food.unitLabel, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            Text("${food.kcal}", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text(food.unitLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 private fun defaultResults() = listOf(
-    FoodResult("🫓", "Arepa de choclo", "Típico · Región andina", 210, iconBg = OrangeAccentLight),
-    FoodResult("🥟", "Empanada de carne", "Típico · Tolima", 230, iconBg = YellowAccentLight),
-    FoodResult("🍛", "Bandeja paisa", "Típico · Antioquia", 860, unitLabel = "kcal / porción", iconBg = GreenAccentLight),
-    FoodResult("🍠", "Patacón con hogao", "Típico · Pacífico", 310, unitLabel = "kcal / porción", iconBg = YellowAccentLight)
+    FoodResult("🫓", "Arepa de choclo", "Típico · Región andina", 210),
+    FoodResult("🥟", "Empanada de carne", "Típico · Tolima", 230),
+    FoodResult("🍛", "Bandeja paisa", "Típico · Antioquia", 860, unitLabel = "kcal / porción"),
+    FoodResult("🍠", "Patacón con hogao", "Típico · Pacífico", 310, unitLabel = "kcal / porción")
 )

@@ -17,7 +17,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.nutriapp.ui.components.PrimaryButton
-import com.nutriapp.ui.theme.*
 
 /**
  * Pantalla 09 · Aviso - Recomendación de acompañamiento profesional antes
@@ -33,7 +32,7 @@ fun AvisoScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(CreamBackground)
+            .background(MaterialTheme.colorScheme.surface)
             .padding(horizontal = 28.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -42,7 +41,7 @@ fun AvisoScreen(
                 Modifier
                     .size(64.dp)
                     .clip(CircleShape)
-                    .background(YellowAccent),
+                    .background(MaterialTheme.colorScheme.tertiary),
                 contentAlignment = Alignment.Center
             ) {
                 Text("🌿", style = MaterialTheme.typography.headlineMedium)
@@ -53,7 +52,7 @@ fun AvisoScreen(
             Text(
                 title,
                 style = MaterialTheme.typography.headlineLarge,
-                color = TextPrimary,
+                color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center
             )
 
@@ -61,7 +60,7 @@ fun AvisoScreen(
 
             val body = buildAnnotatedString {
                 append("La información nutricional es una guía general. ")
-                withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = TextPrimary)) {
+                withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)) {
                     append("Antes de fijar metas de peso, déficit calórico o rutinas intensas, ")
                 }
                 append("habla con un médico, nutricionista o profesional certificado.")
@@ -69,7 +68,7 @@ fun AvisoScreen(
             Text(
                 body,
                 style = MaterialTheme.typography.bodyLarge,
-                color = TextSecondary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
 
@@ -80,7 +79,7 @@ fun AvisoScreen(
             Spacer(Modifier.height(16.dp))
 
             val policyText = buildAnnotatedString {
-                withStyle(SpanStyle(textDecoration = TextDecoration.Underline, color = TextPrimary)) {
+                withStyle(SpanStyle(textDecoration = TextDecoration.Underline, color = MaterialTheme.colorScheme.onSurface)) {
                     append("Ver política de uso y fuentes de datos")
                 }
             }

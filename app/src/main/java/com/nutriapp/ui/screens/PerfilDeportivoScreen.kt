@@ -14,13 +14,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.nutriapp.ui.components.*
-import com.nutriapp.ui.theme.*
 
 data class SportFocus(
     val emoji: String,
     val title: String,
     val description: String,
-    val iconBg: Color
+    val iconBg: Color? = null
 )
 
 /**
@@ -37,7 +36,7 @@ fun PerfilDeportivoScreen(
     var selected by remember { mutableStateOf(initialSelection) }
 
     Scaffold(
-        containerColor = CreamBackground,
+        containerColor = MaterialTheme.colorScheme.surface,
         bottomBar = { AppBottomBar(selected = NavDestination.Perfil, onSelect = onNavigate) }
     ) { padding ->
         Column(
@@ -46,12 +45,16 @@ fun PerfilDeportivoScreen(
                 .padding(padding)
                 .padding(horizontal = 20.dp, vertical = 16.dp)
         ) {
-            Text("¿Para qué entrenas?", style = MaterialTheme.typography.headlineLarge, color = TextPrimary)
+            Text(
+                "¿Para qué entrenas?",
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
             Spacer(Modifier.height(6.dp))
             Text(
                 "Ajustamos tus metas de calorías y macros según tu actividad principal.",
                 style = MaterialTheme.typography.bodyLarge,
-                color = TextSecondary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(20.dp))
 
@@ -92,11 +95,15 @@ private fun FocusCard(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
-            .background(if (selected) SelectedBg else Color.White)
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceContainerLowest
+            )
             .clickable(onClick = onClick)
             .border(
                 if (selected) 2.dp else 1.dp,
-                if (selected) SelectedBorder else Divider,
+                if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.outlineVariant,
                 RoundedCornerShape(18.dp)
             )
             .padding(16.dp)
@@ -105,23 +112,27 @@ private fun FocusCard(
             Modifier
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(focus.iconBg),
+                .background(focus.iconBg ?: MaterialTheme.colorScheme.tertiaryContainer),
             contentAlignment = Alignment.Center
         ) {
             Text(focus.emoji)
         }
         Spacer(Modifier.height(12.dp))
-        Text(focus.title, style = MaterialTheme.typography.titleLarge, color = TextPrimary)
+        Text(focus.title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(4.dp))
-        Text(focus.description, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+        Text(
+            focus.description,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
 private fun defaultFocuses() = listOf(
-    SportFocus("⚽", "Fútbol", "Carga de carbos en días de partido", OrangeAccentLight),
-    SportFocus("🏃", "Running", "Enfoque en resistencia y recuperación", YellowAccentLight),
-    SportFocus("🏋", "Fuerza", "Más proteína, superávit moderado", GreenAccentLight),
-    SportFocus("🚴", "Ciclismo", "Energía sostenida, carbos altos", YellowAccentLight),
-    SportFocus("🔥", "Pérdida de peso", "Déficit controlado y gradual", OrangeAccentLight),
-    SportFocus("🌿", "Mantenimiento", "Balance general, sin objetivo específico", GreenAccentLight)
+    SportFocus("⚽", "Fútbol", "Carga de carbos en días de partido"),
+    SportFocus("🏃", "Running", "Enfoque en resistencia y recuperación"),
+    SportFocus("🏋", "Fuerza", "Más proteína, superávit moderado"),
+    SportFocus("🚴", "Ciclismo", "Energía sostenida, carbos altos"),
+    SportFocus("🔥", "Pérdida de peso", "Déficit controlado y gradual"),
+    SportFocus("🌿", "Mantenimiento", "Balance general, sin objetivo específico")
 )

@@ -19,7 +19,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.nutriapp.ui.components.*
-import com.nutriapp.ui.theme.*
 
 data class ScannedItem(val name: String, val timeAgo: String, val kcal: Int)
 
@@ -35,6 +34,8 @@ fun EscanerScreen(
     onScanResult: () -> Unit = {},
     onNavigate: (NavDestination) -> Unit = {}
 ) {
+    // El visor de cámara es negro fijo en ambos temas (cromo de cámara, no una
+    // superficie de contenido), por eso los textos sobre él usan literales claros.
     Scaffold(
         containerColor = Color.Black,
         bottomBar = { AppBottomBar(selected = NavDestination.Escanear, onSelect = onNavigate) }
@@ -48,13 +49,13 @@ fun EscanerScreen(
                 Text(
                     "Escanea el producto",
                     style = MaterialTheme.typography.headlineMedium,
-                    color = TextOnDark
+                    color = Color(0xFFF7F2E9)
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "Apunta la cámara al código de barras del empaque",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = TextOnDarkSecondary
+                    color = Color(0xFFB8B2A2)
                 )
             }
 
@@ -64,7 +65,7 @@ fun EscanerScreen(
                     .padding(horizontal = 24.dp)
                     .fillMaxWidth()
                     .weight(1f)
-                    .clip(RoundedCornerShape(20.dp))
+                    .clip(MaterialTheme.shapes.extraLarge)
                     .background(Color(0xFF0D0D0C))
                     .clickable(onClick = onScanResult),
                 contentAlignment = Alignment.Center
@@ -77,7 +78,7 @@ fun EscanerScreen(
             Text(
                 "Ingresar código manualmente",
                 style = MaterialTheme.typography.titleMedium,
-                color = OrangeAccent,
+                color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -90,7 +91,7 @@ fun EscanerScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
-                    .background(CreamBackground)
+                    .background(MaterialTheme.colorScheme.surface)
                     .padding(20.dp)
             ) {
                 Box(
@@ -99,7 +100,7 @@ fun EscanerScreen(
                         .height(4.dp)
                         .align(Alignment.CenterHorizontally)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(Divider)
+                        .background(MaterialTheme.colorScheme.outlineVariant)
                 )
                 Spacer(Modifier.height(16.dp))
                 SectionLabel("ESCANEADO RECIENTEMENTE")
@@ -113,17 +114,33 @@ fun EscanerScreen(
                             Modifier
                                 .size(36.dp)
                                 .clip(CircleShape)
-                                .background(ChipInactiveBg),
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Outlined.Delete, contentDescription = null, tint = TextSecondary)
+                            Icon(
+                                Icons.Outlined.Delete,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(item.name, style = MaterialTheme.typography.titleMedium, color = TextPrimary)
-                            Text(item.timeAgo.uppercase(), style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                            Text(
+                                item.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                item.timeAgo.uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                        Text("${item.kcal}", style = MaterialTheme.typography.titleLarge, color = TextPrimary)
+                        Text(
+                            "${item.kcal}",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 }
             }
@@ -134,27 +151,29 @@ fun EscanerScreen(
 /** Marco de escaneo con esquinas amarillas y línea láser central. */
 @Composable
 private fun ScanFrame(modifier: Modifier = Modifier) {
+    // Los colores se leen fuera del bloque draw (DrawScope no es composable).
+    val cornerColor = MaterialTheme.colorScheme.tertiary
+    val laserColor = MaterialTheme.colorScheme.primary
     Canvas(modifier = modifier) {
         val cornerLen = size.width * 0.12f
         val stroke = 6f
-        val color = YellowAccent
 
         // Esquina superior izquierda
-        drawLine(color, Offset(0f, cornerLen), Offset(0f, 0f), stroke, cap = StrokeCap.Round)
-        drawLine(color, Offset(0f, 0f), Offset(cornerLen, 0f), stroke, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(0f, cornerLen), Offset(0f, 0f), stroke, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(0f, 0f), Offset(cornerLen, 0f), stroke, cap = StrokeCap.Round)
         // Esquina superior derecha
-        drawLine(color, Offset(size.width - cornerLen, 0f), Offset(size.width, 0f), stroke, cap = StrokeCap.Round)
-        drawLine(color, Offset(size.width, 0f), Offset(size.width, cornerLen), stroke, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(size.width - cornerLen, 0f), Offset(size.width, 0f), stroke, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(size.width, 0f), Offset(size.width, cornerLen), stroke, cap = StrokeCap.Round)
         // Esquina inferior izquierda
-        drawLine(color, Offset(0f, size.height - cornerLen), Offset(0f, size.height), stroke, cap = StrokeCap.Round)
-        drawLine(color, Offset(0f, size.height), Offset(cornerLen, size.height), stroke, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(0f, size.height - cornerLen), Offset(0f, size.height), stroke, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(0f, size.height), Offset(cornerLen, size.height), stroke, cap = StrokeCap.Round)
         // Esquina inferior derecha
-        drawLine(color, Offset(size.width - cornerLen, size.height), Offset(size.width, size.height), stroke, cap = StrokeCap.Round)
-        drawLine(color, Offset(size.width, size.height), Offset(size.width, size.height - cornerLen), stroke, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(size.width - cornerLen, size.height), Offset(size.width, size.height), stroke, cap = StrokeCap.Round)
+        drawLine(cornerColor, Offset(size.width, size.height), Offset(size.width, size.height - cornerLen), stroke, cap = StrokeCap.Round)
 
         // Línea láser central (estática; anímala con un valor externo si lo necesitas)
         drawLine(
-            OrangeAccent,
+            laserColor,
             Offset(0f, size.height / 2f),
             Offset(size.width, size.height / 2f),
             strokeWidth = 4f

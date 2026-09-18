@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -15,7 +14,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.nutriapp.ui.components.*
-import com.nutriapp.ui.theme.*
 
 /**
  * Pantalla 06 · Metas - Control de objetivos: peso objetivo, meta calórica
@@ -43,7 +41,7 @@ fun MetasScreen(
     var days by remember { mutableStateOf(selectedDays) }
 
     Scaffold(
-        containerColor = CreamBackground,
+        containerColor = MaterialTheme.colorScheme.surface,
         bottomBar = { AppBottomBar(selected = NavDestination.Perfil, onSelect = onNavigate) }
     ) { padding ->
         Column(
@@ -53,7 +51,7 @@ fun MetasScreen(
                 .padding(padding)
                 .padding(horizontal = 20.dp, vertical = 16.dp)
         ) {
-            Text("Tus metas", style = MaterialTheme.typography.headlineLarge, color = TextPrimary)
+            Text("Tus metas", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(20.dp))
 
             GoalSliderBlock(
@@ -91,7 +89,10 @@ fun MetasScreen(
                         Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(if (isSelected) GreenAccent else ChipInactiveBg)
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.secondary
+                                else MaterialTheme.colorScheme.surfaceContainerHighest
+                            )
                             .clickable {
                                 days = if (isSelected) days - day else days + day
                             },
@@ -100,7 +101,8 @@ fun MetasScreen(
                         Text(
                             day,
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (isSelected) Color.White else TextSecondary
+                            color = if (isSelected) MaterialTheme.colorScheme.onSecondary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -111,9 +113,27 @@ fun MetasScreen(
             SectionLabel("DISTRIBUCIÓN DE MACROS")
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                MacroPercentCard("$macroCarbs%", "CARBOS", OrangeAccentLight, OrangeAccent, Modifier.weight(1f))
-                MacroPercentCard("$macroProtein%", "PROTEÍNA", GreenAccentLight, GreenAccent, Modifier.weight(1f))
-                MacroPercentCard("$macroFat%", "GRASAS", YellowAccentLight, YellowAccent, Modifier.weight(1f))
+                MacroPercentCard(
+                    "$macroCarbs%",
+                    "CARBOS",
+                    MaterialTheme.colorScheme.primaryContainer,
+                    MaterialTheme.colorScheme.primary,
+                    Modifier.weight(1f)
+                )
+                MacroPercentCard(
+                    "$macroProtein%",
+                    "PROTEÍNA",
+                    MaterialTheme.colorScheme.secondaryContainer,
+                    MaterialTheme.colorScheme.secondary,
+                    Modifier.weight(1f)
+                )
+                MacroPercentCard(
+                    "$macroFat%",
+                    "GRASAS",
+                    MaterialTheme.colorScheme.tertiaryContainer,
+                    MaterialTheme.colorScheme.tertiary,
+                    Modifier.weight(1f)
+                )
             }
 
             Spacer(Modifier.height(28.dp))
@@ -141,24 +161,28 @@ private fun GoalSliderBlock(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             SectionLabel(label)
-            Text(valueLabel, style = MaterialTheme.typography.titleLarge, color = OrangeAccent)
+            Text(
+                valueLabel,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
         }
         Slider(
             value = value,
             onValueChange = onValueChange,
             valueRange = min..max,
             colors = SliderDefaults.colors(
-                thumbColor = OrangeAccent,
-                activeTrackColor = OrangeAccent,
-                inactiveTrackColor = Divider
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+                inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
             )
         )
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(minLabel, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
-            Text(maxLabel, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            Text(minLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(maxLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -173,7 +197,7 @@ private fun MacroPercentCard(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
+            .clip(MaterialTheme.shapes.large)
             .background(bg)
             .padding(vertical = 16.dp, horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally

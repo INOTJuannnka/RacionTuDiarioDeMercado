@@ -19,7 +19,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.nutriapp.ui.theme.*
 
 /** Los 5 destinos de la barra inferior usados en toda la app. */
 enum class NavDestination(val label: String, val icon: ImageVector) {
@@ -37,7 +36,7 @@ fun AppBottomBar(
 ) {
     NavigationBar(
         modifier = modifier,
-        containerColor = CreamBackground,
+        containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp
     ) {
         NavDestination.values().forEach { dest ->
@@ -52,10 +51,10 @@ fun AppBottomBar(
                 },
                 label = { Text(dest.label, style = MaterialTheme.typography.labelSmall) },
                 colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = OrangeAccent,
-                    selectedTextColor = OrangeAccent,
-                    unselectedIconColor = TextSecondary,
-                    unselectedTextColor = TextSecondary,
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     indicatorColor = Color.Transparent
                 )
             )
@@ -70,8 +69,8 @@ fun OrangeFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
         onClick = onClick,
         modifier = modifier.size(56.dp),
         shape = CircleShape,
-        containerColor = OrangeAccent,
-        contentColor = Color.White
+        containerColor = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary
     ) {
         Icon(Icons.Filled.Add, contentDescription = "Agregar")
     }
@@ -89,8 +88,8 @@ fun MacroStat(label: String, value: String, color: Color, modifier: Modifier = M
                 .background(color)
         )
         Spacer(Modifier.height(8.dp))
-        Text(value, style = MaterialTheme.typography.titleLarge, color = TextPrimary)
-        Text(label, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+        Text(value, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -100,14 +99,18 @@ fun PillTab(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modi
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(20.dp))
-            .background(if (selected) CardDark else ChipInactiveBg)
+            .background(
+                if (selected) MaterialTheme.colorScheme.inverseSurface
+                else MaterialTheme.colorScheme.surfaceContainerHighest
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
         Text(
             text,
             style = MaterialTheme.typography.titleMedium,
-            color = if (selected) TextOnDark else ChipInactiveText
+            color = if (selected) MaterialTheme.colorScheme.inverseOnSurface
+            else MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -118,10 +121,11 @@ fun OptionPill(text: String, selected: Boolean, onClick: () -> Unit, modifier: M
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
-            .background(if (selected) CardDark else Color.Transparent)
+            .background(if (selected) MaterialTheme.colorScheme.inverseSurface else Color.Transparent)
             .border(
                 width = 1.dp,
-                color = if (selected) CardDark else Divider,
+                color = if (selected) MaterialTheme.colorScheme.inverseSurface
+                else MaterialTheme.colorScheme.outlineVariant,
                 shape = RoundedCornerShape(24.dp)
             )
             .clickable(onClick = onClick)
@@ -131,7 +135,8 @@ fun OptionPill(text: String, selected: Boolean, onClick: () -> Unit, modifier: M
         Text(
             text,
             style = MaterialTheme.typography.titleMedium,
-            color = if (selected) TextOnDark else TextPrimary
+            color = if (selected) MaterialTheme.colorScheme.inverseOnSurface
+            else MaterialTheme.colorScheme.onSurface
         )
     }
 }
@@ -144,8 +149,11 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
         modifier = modifier
             .fillMaxWidth()
             .height(52.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = OrangeAccent, contentColor = Color.White)
+        shape = MaterialTheme.shapes.large,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary
+        )
     ) {
         Text(text, style = MaterialTheme.typography.titleLarge)
     }
@@ -157,7 +165,7 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
         style = MaterialTheme.typography.labelLarge,
-        color = TextSecondary,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = modifier
     )
 }
@@ -169,7 +177,7 @@ fun MealRow(
     name: String,
     meta: String,
     kcal: Int,
-    iconBg: Color = YellowAccentLight,
+    iconBg: Color? = null,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -180,21 +188,24 @@ fun MealRow(
             Modifier
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(iconBg),
+                .background(iconBg ?: MaterialTheme.colorScheme.tertiaryContainer),
             contentAlignment = Alignment.Center
         ) {
             Text(emoji, fontSize = 18.sp)
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(name, style = MaterialTheme.typography.titleMedium, color = TextPrimary)
-            Text(meta, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            Text(name, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text("$kcal", style = MaterialTheme.typography.titleLarge, color = TextPrimary)
+        Text("$kcal", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
-/** Tarjeta oscura con métrica grande, usada en cabeceras de "Confirmar" y otras. */
+/**
+ * Tarjeta oscura con métrica grande, usada en cabeceras de "Confirmar" y otras.
+ * Usa roles inverse del tema: oscura en modo claro y crema en modo oscuro.
+ */
 @Composable
 fun DarkStatCard(
     value: String,
@@ -204,12 +215,16 @@ fun DarkStatCard(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(CardDark)
+            .clip(MaterialTheme.shapes.extraLarge)
+            .background(MaterialTheme.colorScheme.inverseSurface)
             .padding(20.dp)
     ) {
-        Text(value, style = MaterialTheme.typography.displayLarge, color = TextOnDark)
-        Text(label, style = MaterialTheme.typography.labelLarge, color = TextOnDarkSecondary)
+        Text(value, style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.inverseOnSurface)
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.7f)
+        )
         content?.let {
             Spacer(Modifier.height(12.dp))
             it()

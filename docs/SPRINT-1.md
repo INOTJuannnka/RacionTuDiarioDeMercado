@@ -74,10 +74,12 @@ Commits conventional. Nada de atribución a IA.
 
 ```
 J1 (google-services.json)  ──bloquea──>  D3 (plugin google-services)
-J2 (decisión de cuenta)   ──bloquea──>  D2 (contrato de AuthRepository)
+J6 (providers en consola)  ──bloquea──>  D2, D4 (probar un sign-in real)
 J3 (deps Room + KSP)      ──bloquea──>  J4 (entities y DAOs)
 B1 (interceptor UA)       ──bloquea──>  B3 (llamadas reales a la API)
 ```
+
+J2 **ya no bloquea a nadie**: la decisión de estrategia de cuenta está ratificada (ver J2).
 
 Brayan **no está bloqueado por nadie** y puede empezar de inmediato. Empezá por ahí.
 
@@ -101,8 +103,29 @@ reemplazarlo: `callbackFlow` sobre `addAuthStateListener`, cerrado con `awaitClo
 El contrato de `AuthRepository` es que `authState` **nunca completa y nunca tira**. Un read fallido
 es una emisión de estado vacío, no una excepción.
 
-> **Bloqueado por J2.** La decisión de estrategia de cuenta (anónimo vs. email real) define el
-> contrato. No escribas el repositorio hasta que Julian la cierre en `ROADMAP.md`.
+> **Ya no está bloqueado por J2:** la decisión está ratificada y es *anonymous-first*. El alcance es:
+> - `signInAnonymously()` como punto de entrada por defecto. Tiene que correr **antes** de
+>   cualquier lectura o escritura de Firestore, porque las reglas de seguridad y los paths
+>   `users/{uid}` están indexados por un `currentUser` que todavía no existe. Es una llamada de
+>   red: puede fallar y hay que mapear el fallo, no tragárselo.
+> - `promoteToEmailAccount(email, password)` vía `linkWithCredential`. **Conserva el mismo `uid`**,
+>   así que ningún documento se mueve y no hay migración de datos. `ERROR_EMAIL_ALREADY_IN_USE`
+>   necesita su propio mensaje accionable, no un error genérico.
+> - El `callbackFlow` real resolviendo **tres** estados: `Unauthenticated` / `Anonymous` /
+>   `Authenticated`. Mapear todo `currentUser != null` a `Authenticated` borra el estado anónimo y
+>   deja indistinguible una sesión descartable de una permanente.
+> - `signUp` queda **supersedido** por la promoción. No lo borres —`LoginViewModel` y
+>   `RegisterScreen` lo siguen llamando— pero tampoco lo extiendas: queda como andamiaje hasta que
+>   sus callers migren. Borrarlo es un follow-up conocido, no parte de esta tarea.
+>
+> **No-objetivo de v1:** si el correo que tipea el usuario ya pertenece a otra cuenta, **no** se
+> mergean los dos árboles de datos. Se le dice que esa cuenta ya existe y que inicie sesión con
+> ella. Mergear a medias en silencio sería peor que una negativa clara.
+>
+> **Cuidado con `signOut()`.** Sobre una sesión anónima destruye el `uid` y todos sus datos de
+> Firestore, de forma **irreversible** y del lado del servidor. No hay undo ni backup posible. La
+> UI tiene que confirmar antes de llamarlo, y la confirmación tiene que decir qué se pierde —un
+> "¿Cerrar sesión?" genérico hace pasar una acción destructiva por reversible.
 
 ### D3 · FF-3 — Plugin de google-services
 Descomentar `alias(libs.plugins.google.services)` en el `plugins` block.
@@ -125,6 +148,12 @@ Cubrir las transiciones de `authState`: anónimo → logueado → deslogueado.
 y una semana que falló al cargar no pueden verse igual.
 
 Además: estado de carga visible y submit deshabilitado mientras la validación corre.
+
+Y el branch de **tres** estados en la pantalla de perfil: `Unauthenticated` ofrece iniciar sesión,
+`Authenticated` muestra la identidad con un cierre de sesión normal (que no destruye nada), y
+`Anonymous` es el único que tiene que ofrecer **"reclamá tu cuenta"** — con la advertencia de que
+cerrar sesión ahí borra los datos. Es la única pantalla que hace este branch; el resto delega en
+"hay sesión o no".
 
 ### D6 · FF-7 — Gatear la ruta inicial por autenticación
 `startRoute` tiene que pasar a ser **estado recolectado**, no un `val` calculado antes de `setContent`.
@@ -191,12 +220,16 @@ descargar `google-services.json` y dejarlo en `app/`.
 
 Verificado: `.gitignore` línea 18 ya cubre `google-services.json`. **Nunca se commitea.**
 
-### J2 · Decisión de estrategia de cuenta *(bloquea a Daniel)*
-Escribir el veredicto en `ROADMAP.md` § *Decisions to make*, punto 2.
+### J2 · Decisión de estrategia de cuenta — **HECHO**
+Veredicto escrito en `ROADMAP.md` § *Decisions to make*, punto 2: **anonymous-first está ratificado**.
 
-Anónimo es el arranque correcto: cero fricción, sin flujo de email, y promocionable después vía
-`linkWithCredential`. El riesgo abierto es **qué pasa con los datos ya escritos bajo el `uid` anónimo en
-el momento de la promoción**. Ese merge hay que diseñarlo **antes** de FF-4, no después.
+La línea que lo justifica, en una: `linkWithCredential` **conserva el mismo `uid`**, así que no hay
+migración de datos de Firestore — la cuenta permanente hereda todo lo que ya escribió la sesión
+anónima. El merge que esta tarea tenía que diseñar antes de FF-4 resultó no existir.
+
+**No-objetivo de v1:** si el correo tipeado ya pertenece a otra cuenta, no se mergean los árboles de
+datos; se le dice al usuario que esa cuenta ya existe y que inicie sesión con ella. La decisión se
+puede revisar más adelante si alguna vez hacen falta cuentas obligatorias.
 
 ### J3 · DB-1 — Dependencias de Room y KSP
 `androidx.room:room-runtime`, `room-ktx`, `room-compiler` (por KSP) en `libs.versions.toml`, y el
@@ -215,6 +248,18 @@ plugin KSP habilitado en `app/build.gradle.kts`. Esto también destraba el codeg
 ### J5 · Mergear a `main`
 Sólo con `:app:assembleDebug` y `:app:testDebugUnitTest` en verde.
 
+### J6 · FF-4 — Habilitar los providers en Firebase Console *(bloquea a Daniel)*
+En **Authentication → Sign-in method**:
+
+- **Anonymous**: habilitado. Es el arranque de toda sesión nueva.
+- **Email/Password**: habilitado. Es lo que permite reclamar la cuenta más adelante.
+
+> **Es acceso a consola, así que es tuyo.** Daniel no lo puede hacer.
+>
+> **No se puede probar ningún sign-in hasta que esté.** Con el provider apagado, Firebase falla en
+> runtime con un error poco descriptivo, y es fácil perder horas debuggeando el repositorio cuando
+> el problema real era un toggle en la consola. Hacelo antes de que Daniel mergee su rama.
+
 ---
 
 ## 6. Orden sugerido de arranque
@@ -222,8 +267,8 @@ Sólo con `:app:assembleDebug` y `:app:testDebugUnitTest` en verde.
 | Quién | Primer paso |
 |---|---|
 | **Brayan** | B1 (interceptor) → B3 → B4. No espera a nadie. |
-| **Julian** | J1 (libera a Daniel) → J2 (libera a Daniel) → J3 → J4 |
-| **Daniel** | D1 → **esperar J2** → D2 → **esperar J1** → D3 → D4, D5, D6 |
+| **Julian** | J1 (libera a Daniel) → J6 (libera las pruebas de Daniel) → J3 → J4. J2 ya está. |
+| **Daniel** | D1 → D2 (**ya no espera a J2**) → **esperar J1** → D3 → D4 (probar sign-in real necesita J6), D5, D6 |
 
 ---
 

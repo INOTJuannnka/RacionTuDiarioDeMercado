@@ -95,9 +95,25 @@ requirement for a local DB and fits a market app with intermittent signal.
 
 ### 2.3 Backend services
 
-- [ ] **FF-4.** Enable **Authentication → Anonymous** and decide the account strategy (see
-      *Decisions to make*). Do not write user data under an anonymous `uid` before deciding how
-      it is promoted to a real account.
+- [ ] **FF-4.** Enable **Authentication → Anonymous**, plus **Email/Password** for the promotion
+      step. The account strategy is no longer an open question: **anonymous-first is ratified** (see
+      *Decisions to make*, item 2). Writing user data under an anonymous `uid` is therefore safe,
+      because claiming the account links a credential with `linkWithCredential`, which
+      **preserves the same `uid`** — no document moves and no data merge is required.
+      - [ ] Implement the real `FirebaseAuthRepository`: `callbackFlow` over `addAuthStateListener`,
+            closed with `awaitClose { removeAuthStateListener(listener) }`. This is what replaces
+            today's `flowOf(AuthState.Unauthenticated)` stub, which **completes** after a single
+            emission and so violates the contract that `authState` never completes. The listener
+            must resolve **three** states — `Unauthenticated` / `Anonymous` / `Authenticated` —
+            not two.
+      - [ ] `signInAnonymously()` is the default entry point and must run before any Firestore read
+            or write, because the security rules and the `users/{uid}` paths are keyed on a
+            `currentUser` that does not exist yet. It is a network call and can fail.
+      - [ ] `promoteToEmailAccount(email, password)` links the credential to the *current* user,
+            keeping the `uid`. Map `ERROR_EMAIL_ALREADY_IN_USE` to its own actionable message.
+      - [ ] v1 non-goal: when the address the user types already belongs to another account, do
+            **not** merge the two data trees. Tell the user that account already exists and to sign
+            in with it instead.
 - [ ] **FF-5.** Create **Cloud Firestore** and write **deny-by-default security rules**. Every
       rule must require `request.auth.uid == <the path's userId>`; there is no public read and no
       public write.
@@ -230,10 +246,20 @@ These are open questions, not defaults. Each one changes the data model or the r
    the totals must be repairable from the entries. *Update (Phase 2):* this decision carries less
    weight now — ROOM is the local source of truth, so the remote store is a sync target; Firestore
    still wins on `FieldValue.increment`, server timestamps and multi-device merge.
-2. **Anonymous auth vs real accounts.** Anonymous is the right start: zero friction for a market
-   app, no email flow, and it can be promoted to a real account later via
-   `linkWithCredential`. The open risk is what happens to the data already written under the
-   anonymous `uid` at promotion time — that merge has to be designed before `FF-4`, not after.
+2. **Anonymous auth vs real accounts.** **RESOLVED — anonymous-first is ratified.** A new user gets
+   a usable session with no account and no form; they claim it later if they want one. The risk this
+   item used to flag — what happens to the data already written under the anonymous `uid` at
+   promotion time — **does not exist**: `FirebaseUser.linkWithCredential` **preserves the same
+   `uid`**, so the permanent account inherits access to every document the anonymous session wrote.
+   No document moves, and there is no merge to design before `FF-4`.
+   - *v1 non-goal:* if the address the user types already belongs to a **different** account,
+     `linkWithCredential` fails with `ERROR_EMAIL_ALREADY_IN_USE` and reconciling two unrelated data
+     trees is genuinely expensive. v1 does not attempt it. The caller surfaces an honest message:
+     that account already exists, so sign in with it instead. A partial, silent merge would be worse
+     than a clear refusal.
+   - *Revisit only if* mandatory accounts are ever required (a feature that needs a recoverable
+     identity across devices, for instance). If that happens the merge is a new, real task — it is
+     not a rework of what is being built now.
 3. **Hilt, or stay on manual DI?** Manual DI is currently cheaper and fully explicit. It starts
    to hurt when there are more than a handful of scoped objects or when test doubles need to be
    swapped per-test. Decide when the first ViewModels land (`ST-1`), not before.

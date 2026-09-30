@@ -22,9 +22,12 @@ import kotlinx.coroutines.flow.Flow
  * save their profile must still be recorded as consented, and a profile write must never be
  * able to grant or revoke consent as a side effect.
  *
- * TODO(FF-4): the `uid` comes from Firebase Auth. Anonymous sign-in is the current plan; see
- * the open question in `docs/ROADMAP.md` about promoting an anonymous account to a real one
- * before any data is written under it.
+ * TODO(FF-4): the `uid` comes from Firebase Auth. Anonymous sign-in is the DECIDED strategy, not
+ * an open question — see *Decisions to make*, item 2 in `docs/ROADMAP.md`. Data written under the
+ * anonymous `uid` is safe to write, because claiming the account with `linkWithCredential` keeps
+ * the same `uid` and nothing moves. The one case that is not free is the user typing an address
+ * that already belongs to another account; v1 does not merge the two trees, it tells the user to
+ * sign in with that account instead.
  *
  * TODO(FF-5): implement with `DocumentReference` snapshot listeners converted to `Flow`s.
  */

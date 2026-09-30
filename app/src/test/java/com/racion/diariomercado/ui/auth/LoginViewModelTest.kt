@@ -258,10 +258,18 @@ class LoginViewModelTest {
      * [signInCalls] / [signUpCalls] exist only to assert the negative case — that an invalid form
      * did NOT reach the data layer — so they are the whole reason this is a fake rather than a
      * mock with no verification on it.
+     *
+     * [signInAnonymouslyCalls] / [promoteCalls] follow the same convention for the anonymous-first
+     * commands: they are here so a ViewModel that claims an account can assert it reached the
+     * repository exactly once, with the arguments the user typed. No test exercises them yet —
+     * [LoginViewModel] does not call either — but the contract is three-state now, and a fake that
+     * silently dropped them would not compile.
      */
     private class FakeAuthRepository(
         private val signInResult: AppResult<Unit> = AppResult.Success(Unit),
-        private val signUpResult: AppResult<Unit> = AppResult.Success(Unit)
+        private val signUpResult: AppResult<Unit> = AppResult.Success(Unit),
+        private val signInAnonymouslyResult: AppResult<Unit> = AppResult.Success(Unit),
+        private val promoteResult: AppResult<Unit> = AppResult.Success(Unit)
     ) : AuthRepository {
 
         private val state = MutableStateFlow<AuthState>(AuthState.Unauthenticated)
@@ -272,8 +280,37 @@ class LoginViewModelTest {
             private set
         var lastSignIn: Pair<String, String>? = null
             private set
+        var signInAnonymouslyCalls = 0
+            private set
+        var promoteCalls = 0
+            private set
+        var lastPromotion: Pair<String, String>? = null
+            private set
 
         override val authState: Flow<AuthState> = state
+
+        override suspend fun signInAnonymously(): AppResult<Unit> {
+            signInAnonymouslyCalls++
+            if (signInAnonymouslyResult is AppResult.Success) {
+                // NOT Authenticated: an anonymous session has a real uid and Firestore access, but
+                // no permanent credential. Collapsing the two here would hide the exact distinction
+                // the three-state AuthState exists to express.
+                state.value = AuthState.Anonymous
+            }
+            return signInAnonymouslyResult
+        }
+
+        override suspend fun promoteToEmailAccount(
+            email: String,
+            password: String
+        ): AppResult<Unit> {
+            promoteCalls++
+            lastPromotion = email to password
+            if (promoteResult is AppResult.Success) {
+                state.value = AuthState.Authenticated
+            }
+            return promoteResult
+        }
 
         override suspend fun signIn(email: String, password: String): AppResult<Unit> {
             signInCalls++

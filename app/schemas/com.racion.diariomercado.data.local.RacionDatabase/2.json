@@ -1,0 +1,470 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "efdeb8232e08b1fb2ef095bbe6d86c37",
+    "entities": [
+      {
+        "tableName": "diary_entries",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `productBarcode` TEXT NOT NULL, `servings` INTEGER NOT NULL, `mealSlot` TEXT NOT NULL, `loggedAtEpochMillis` INTEGER NOT NULL, `dayKey` TEXT NOT NULL, `kcal` INTEGER NOT NULL, `carbsG` REAL NOT NULL, `proteinG` REAL NOT NULL, `fatG` REAL NOT NULL, `sugarsG` REAL NOT NULL, `fiberG` REAL NOT NULL, `sodiumG` REAL NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`productBarcode`) REFERENCES `food_products`(`barcode`) ON UPDATE CASCADE ON DELETE RESTRICT )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "productBarcode",
+            "columnName": "productBarcode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "servings",
+            "columnName": "servings",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mealSlot",
+            "columnName": "mealSlot",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "loggedAtEpochMillis",
+            "columnName": "loggedAtEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayKey",
+            "columnName": "dayKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kcal",
+            "columnName": "kcal",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "carbsG",
+            "columnName": "carbsG",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "proteinG",
+            "columnName": "proteinG",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fatG",
+            "columnName": "fatG",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sugarsG",
+            "columnName": "sugarsG",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fiberG",
+            "columnName": "fiberG",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sodiumG",
+            "columnName": "sodiumG",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_diary_entries_dayKey",
+            "unique": false,
+            "columnNames": [
+              "dayKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_diary_entries_dayKey` ON `${TABLE_NAME}` (`dayKey`)"
+          },
+          {
+            "name": "index_diary_entries_productBarcode",
+            "unique": false,
+            "columnNames": [
+              "productBarcode"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_diary_entries_productBarcode` ON `${TABLE_NAME}` (`productBarcode`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "food_products",
+            "onDelete": "RESTRICT",
+            "onUpdate": "CASCADE",
+            "columns": [
+              "productBarcode"
+            ],
+            "referencedColumns": [
+              "barcode"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "food_products",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`barcode` TEXT NOT NULL, `name` TEXT NOT NULL, `brand` TEXT, `quantityLabel` TEXT, `servingGrams` REAL, `kcalPer100g` INTEGER NOT NULL, `carbsPer100g` REAL NOT NULL, `proteinPer100g` REAL NOT NULL, `fatPer100g` REAL NOT NULL, `sugarsPer100g` REAL NOT NULL, `fiberPer100g` REAL NOT NULL, `sodiumPer100g` REAL NOT NULL, `imageUrl` TEXT, `nutriscoreGrade` TEXT, `categories` TEXT NOT NULL, `ingredientsText` TEXT, `emoji` TEXT NOT NULL, PRIMARY KEY(`barcode`))",
+        "fields": [
+          {
+            "fieldPath": "barcode",
+            "columnName": "barcode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "brand",
+            "columnName": "brand",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "quantityLabel",
+            "columnName": "quantityLabel",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "servingGrams",
+            "columnName": "servingGrams",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "kcalPer100g",
+            "columnName": "kcalPer100g",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "carbsPer100g",
+            "columnName": "carbsPer100g",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "proteinPer100g",
+            "columnName": "proteinPer100g",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fatPer100g",
+            "columnName": "fatPer100g",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sugarsPer100g",
+            "columnName": "sugarsPer100g",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fiberPer100g",
+            "columnName": "fiberPer100g",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sodiumPer100g",
+            "columnName": "sodiumPer100g",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageUrl",
+            "columnName": "imageUrl",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "nutriscoreGrade",
+            "columnName": "nutriscoreGrade",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "categories",
+            "columnName": "categories",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ingredientsText",
+            "columnName": "ingredientsText",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "emoji",
+            "columnName": "emoji",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "barcode"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_food_products_barcode",
+            "unique": true,
+            "columnNames": [
+              "barcode"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_food_products_barcode` ON `${TABLE_NAME}` (`barcode`)"
+          }
+        ]
+      },
+      {
+        "tableName": "nutrition_goals",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`userId` TEXT NOT NULL, `targetWeightKg` REAL NOT NULL, `currentWeightKg` REAL NOT NULL, `kcalPerDay` INTEGER NOT NULL, `activeDays` TEXT NOT NULL, `carbsPct` INTEGER NOT NULL, `proteinPct` INTEGER NOT NULL, `fatPct` INTEGER NOT NULL, PRIMARY KEY(`userId`))",
+        "fields": [
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetWeightKg",
+            "columnName": "targetWeightKg",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currentWeightKg",
+            "columnName": "currentWeightKg",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kcalPerDay",
+            "columnName": "kcalPerDay",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activeDays",
+            "columnName": "activeDays",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "carbsPct",
+            "columnName": "carbsPct",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "proteinPct",
+            "columnName": "proteinPct",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fatPct",
+            "columnName": "fatPct",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "userId"
+          ]
+        }
+      },
+      {
+        "tableName": "user_profiles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`userId` TEXT NOT NULL, `displayName` TEXT NOT NULL, `sportFocus` TEXT NOT NULL, `currentWeightKg` REAL NOT NULL, PRIMARY KEY(`userId`))",
+        "fields": [
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sportFocus",
+            "columnName": "sportFocus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currentWeightKg",
+            "columnName": "currentWeightKg",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "userId"
+          ]
+        }
+      },
+      {
+        "tableName": "sync_outbox",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`entryId` TEXT NOT NULL, `op` TEXT NOT NULL, `productBarcode` TEXT NOT NULL, `productName` TEXT NOT NULL, `servings` INTEGER NOT NULL, `mealSlot` TEXT NOT NULL, `loggedAtEpochMillis` INTEGER NOT NULL, `dayKey` TEXT NOT NULL, `kcal` INTEGER NOT NULL, `carbsG` REAL NOT NULL, `proteinG` REAL NOT NULL, `fatG` REAL NOT NULL, `sugarsG` REAL NOT NULL, `fiberG` REAL NOT NULL, `sodiumG` REAL NOT NULL, `enqueuedAtEpochMillis` INTEGER NOT NULL, PRIMARY KEY(`entryId`))",
+        "fields": [
+          {
+            "fieldPath": "entryId",
+            "columnName": "entryId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "op",
+            "columnName": "op",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "productBarcode",
+            "columnName": "productBarcode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "productName",
+            "columnName": "productName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "servings",
+            "columnName": "servings",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mealSlot",
+            "columnName": "mealSlot",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "loggedAtEpochMillis",
+            "columnName": "loggedAtEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayKey",
+            "columnName": "dayKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kcal",
+            "columnName": "kcal",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "carbsG",
+            "columnName": "carbsG",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "proteinG",
+            "columnName": "proteinG",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fatG",
+            "columnName": "fatG",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sugarsG",
+            "columnName": "sugarsG",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fiberG",
+            "columnName": "fiberG",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sodiumG",
+            "columnName": "sodiumG",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enqueuedAtEpochMillis",
+            "columnName": "enqueuedAtEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "entryId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_sync_outbox_enqueuedAtEpochMillis",
+            "unique": false,
+            "columnNames": [
+              "enqueuedAtEpochMillis"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sync_outbox_enqueuedAtEpochMillis` ON `${TABLE_NAME}` (`enqueuedAtEpochMillis`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'efdeb8232e08b1fb2ef095bbe6d86c37')"
+    ]
+  }
+}

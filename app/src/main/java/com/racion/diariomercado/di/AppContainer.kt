@@ -1,10 +1,14 @@
 package com.racion.diariomercado.di
 
 import android.content.Context
+import androidx.room.Room
 import com.racion.diariomercado.BuildConfig
 import com.racion.diariomercado.data.firebase.FirebaseAuthRepository
+import com.racion.diariomercado.data.local.LocalDiaryRepository
+import com.racion.diariomercado.data.local.RacionDatabase
 import com.racion.diariomercado.data.openfood.OpenFoodFactsService
 import com.racion.diariomercado.domain.repository.AuthRepository
+import com.racion.diariomercado.domain.repository.DiaryRepository
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.OkHttpClient
@@ -107,31 +111,111 @@ class AppContainer(private val context: Context) {
     /**
      * [AuthRepository] backed by Firebase Authentication.
      *
-     * The one repository in this container that needs NO constructor argument, because
-     * [FirebaseAuthRepository] has no Firebase handle yet — it cannot touch Firebase until the
-     * google-services plugin is applied (FF-3) and `FirebaseApp` is initialised (FF-2). It takes
-     * none today; it will take `FirebaseAuth.getInstance()` the moment both land, and that is the
-     * one signature change this property will see.
+     * ## Still takes no constructor argument — and now that is a decision, not a gap
+     * FF-2 and FF-3 have landed, so this note previously predicted the opposite: it said the
+     * property "will take `FirebaseAuth.getInstance()` the moment both land, and that is the one
+     * signature change this property will see". That prediction was wrong, and the way it was
+     * wrong is worth keeping.
      *
-     * It is exposed here, rather than left in the TODO block below, because the login screens are
-     * real now and they need an interface to bind against. The dependency is on the INTERFACE
-     * only — see the note in the TODO block.
+     * [FirebaseAuthRepository] resolves the handle **lazily inside each method**, never in a
+     * constructor or a property. So the seam did not move: this property still reads
+     * `FirebaseAuthRepository()` and the wiring below needed no edit when the login landed.
+     * Passing the handle in would have made this container depend on the *timing* of Firebase
+     * initialisation — `FirebaseAuth.getInstance()` throws when `FirebaseApp` is not ready yet —
+     * and a manual DI container is exactly the place where that ordering bug would be hardest to
+     * see. Lazy resolution moves the failure to the call that actually needs it.
+     *
+     * It is exposed here rather than in the TODO block below because the login screens are real
+     * and they need an interface to bind against. The dependency is on the INTERFACE only — see
+     * the note in the TODO block.
      */
     val authRepository: AuthRepository by lazy {
         FirebaseAuthRepository()
     }
 
-    // TODO(OFF-4): expose the repository interfaces once their implementations exist:
+    /**
+     * The local ROOM database, built here rather than in `RationApplication`.
+     *
+     * ## Why not in `RationApplication.onCreate()`
+     * `RationApplication` belongs to FF-2, and opening a database from `onCreate` makes this
+     * container a passive bystander: a test, a preview or any future `Application` subclass would
+     * silently get a different database instance than production does. Owning the builder here
+     * keeps the whole graph — including the one expensive-to-build singleton — readable in this
+     * file, which is the entire point of manual DI.
+     *
+     * ## The destructive fallbacks are absent, and `.addMigrations(...)` is present
+     * No `fallbackToDestructiveMigration` and no `fallbackToDestructiveMigrationOnDowngrade`.
+     * `RacionDatabase` omits them on purpose (see its KDoc): on a missing migration Room throws at
+     * open time rather than `DROP`-ing the user's diary, and that crash is the feature.
+     *
+     * `.addMigrations(RacionDatabase.MIGRATION_1_2)` is what makes that crash not fire on upgrade.
+     * Without it, every install that was on v1 throws `IllegalStateException: A migration from 1 to
+     * 2 was required but not found` the moment DB-7's version bump ships — which is the trade this
+     * line is closing: the strictness above is only affordable because the real migration is
+     * registered here.
+     *
+     * The downgrade variant stays absent, and it is worth being explicit about why, because the
+     * reason changed since it was first written. It existed to let a test build a v1 database and
+     * reopen it as v2 without a `Migration`. DB-7's `MigrationTestHelper` test does exactly that,
+     * and it needs no help from here — it constructs its own database against the checked-in
+     * `app/schemas/1.json`. So the tempting shortcut is available and remains rejected: it would
+     * exercise the destructive fallback instead of the migration, and a test that passes because
+     * it deleted the data it was meant to migrate proves nothing about the migration.
+     */
+    private val rationDatabase: RacionDatabase by lazy {
+        Room.databaseBuilder(context, RacionDatabase::class.java, RacionDatabase.NAME)
+            .addMigrations(RacionDatabase.MIGRATION_1_2)
+            .build()
+    }
+
+    /**
+     * The app's [DiaryRepository]: ROOM, local-first, offline-tolerant.
+     *
+     * ## Why it replaces the `FirestoreDiaryRepository` line in the TODO block
+     * The roadmap fixes the data flow — "toda escritura va primero a la base local; Firestore es
+     * la proyección de sync/backup, nunca el primer destino" — so the repository the screens
+     * depend on has to be the local one. Wiring Firestore here instead would make the app's
+     * diary unreadable without a network, which is the opposite of the requirement.
+     *
+     * `FirestoreDiaryRepository` is not wasted work: it becomes the *sync* leg in DB-7, behind
+     * `SyncTransport`, and the interface both satisfy is unchanged.
+     *
+     * The `userId` is [LocalDiaryRepository.LOCAL_USER_ID] until `AuthRepository` exposes the
+     * session uid — a substitution point in one line, not an architecture decision.
+     *
+     * `syncOutboxDao` is wired here for the same reason `catalogDao` is: DB-7 made it a
+     * constructor dependency, and a repository that took the database already owns it could have
+     * reached it through `database.syncOutboxDao()`. Passing the DAO is the house convention —
+     * dependencies named at the edge, one accessor per collaborator — and it is what lets a test
+     * assert on the queue without constructing a second repository.
+     *
+     * `now` is left at its default on purpose. It exists so tests can order the queue; production
+     * wants the wall clock, and spelling out `System::currentTimeMillis` here would be a line that
+     * can only ever be deleted.
+     */
+    val diaryRepository: DiaryRepository by lazy {
+        LocalDiaryRepository(
+            diaryDao = rationDatabase.diaryDao(),
+            catalogDao = rationDatabase.catalogDao(),
+            goalsDao = rationDatabase.goalsDao(),
+            syncOutboxDao = rationDatabase.syncOutboxDao(),
+            database = rationDatabase,
+            userId = LocalDiaryRepository.LOCAL_USER_ID
+        )
+    }
+
+    // TODO(OFF-4): expose the remaining repository interfaces once their implementations exist:
     //
     //   val foodCatalogRepository: FoodCatalogRepository by lazy {
     //       OpenFoodFactsCatalogRepository(openFoodFactsService)
     //   }
-    //   val diaryRepository: DiaryRepository by lazy { FirestoreDiaryRepository(firestore) }
     //   val goalsRepository: GoalsRepository by lazy { FirestoreGoalsRepository(firestore) }
     //   val profileRepository: ProfileRepository by lazy { FirestoreProfileRepository(firestore) }
     //
+    // `diaryRepository` is no longer in this list: it is wired above, backed by ROOM.
+    //
     // Screens must depend on the INTERFACES, never on the implementations above, so the
-    // Open Food Facts / Firestore choice stays replaceable.
+    // Open Food Facts / ROOM / Firestore choice stays replaceable.
     //
     // TODO(FF-4): `firestore` is FirebaseFirestore.getInstance() created after the
     // setFirestoreSettings() call in RacionApplication.onCreate().

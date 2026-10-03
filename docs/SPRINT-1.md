@@ -231,19 +231,62 @@ anónima. El merge que esta tarea tenía que diseñar antes de FF-4 resultó no 
 datos; se le dice al usuario que esa cuenta ya existe y que inicie sesión con ella. La decisión se
 puede revisar más adelante si alguna vez hacen falta cuentas obligatorias.
 
-### J3 · DB-1 — Dependencias de Room y KSP
+### J3 · DB-1 — Dependencias de Room y KSP — **HECHO** (3 oct 2026)
 `androidx.room:room-runtime`, `room-ktx`, `room-compiler` (por KSP) en `libs.versions.toml`, y el
 plugin KSP habilitado en `app/build.gradle.kts`. Esto también destraba el codegen de Moshi.
 
-### J4 · DB-2..DB-6 — Esquema local
+Room `2.8.5`, KSP `2.3.12`, Robolectric `4.17`. Tres desviaciones, cada una forzada por un fallo
+observado al correr el build, no por criterio:
+1. **KSP se elige contra AGP 9.4.0, no contra Kotlin.** AGP activa built-in Kotlin, y eso prohíbe
+   toda la línea KSP 2.2.x (`2.2.20-2.0.4` incluida). La línea 2.3.x además dropeó el sufijo
+   `-2.0.x`: `2.3.12` resuelve, `2.3.12-2.0.2` no existe.
+2. **Room lleva `version.ref` explícito.** El BOM de Compose 2026.02.01 no contiene ninguna entrada
+   `androidx.room`, así que declararlo sin versión falla con *Could not find*.
+3. **`RoomSchemaArgProvider` usa `@InputFiles`, no `@InputDirectory`.** El patrón documentado por
+   Google falla en Gradle 9.6: KSP crea el directorio de schemas sólo cuando hay una base que
+   exporta, y git no trackea directorios vacíos.
+
+También se saneó un defecto de build: `firebase-bom:34.12.0` y `firebase-auth` hardcodeadas y
+duplicadas, que Gradle no reporta como error (resuelve a la mayor en silencio, dejando el catálogo
+mintiendo). Las 3 libs de Google Sign-In se migraron al catálogo, sin uso en código.
+
+### J4 · DB-2..DB-6 — Esquema local — **HECHO** (3 oct 2026)
 - **Entities**: `DiaryEntryEntity`, `FoodProductEntity`, `NutritionGoalsEntity`, `UserProfileEntity`.
   Los day keys son strings `yyyy-MM-dd`, para que una semana sea un **range query léxico** y coincida
-  con el layout de Firestore.
-- **DAOs**: `DiaryDao`, `GoalsDao`, `ProfileDao`, `CatalogDao`. Cada read expone un `Flow`.
+  con el layout de Firestore. `Nutrition` se **aplana** en 7 columnas: embebido las escondería tras
+  `nutrition.kcal`, donde `SUM` no llega. Sin columna `onboardingCompleted`, para que el
+  consentimiento se pueda escribir independiente de un write de perfil.
+- **DAOs**: `DiaryDao`, `GoalsDao`, `ProfileDao`, `CatalogDao`. Cada read expone un `Flow`. La
+  semana es un rango **semiabierto** (`>= from AND < to`): el límite superior exclusivo es el lunes
+  siguiente, que quien camina de semana en semana ya tiene. Un `BETWEEN` inclusivo obliga a sumar 6
+  días en el call site y se infla a 8 sin que nadie se entere.
 - **Totales del día**: se calculan con `SUM` en la query del DAO. Nada de documento local con
   write-contention — los totales remotos en `days/{date}` son la proyección server-side del sync.
-- **Índices**: `@Index` en `DiaryEntry.dayKey`, y un `@Index` único en el barcode del catálogo.
-- **DB versionada** con estrategia de migración desde el día uno.
+  `SUM` + `COALESCE(...,0)` sobre los 7 campos, con proyección dedicada `DayNutritionTotals`: sin el
+  `COALESCE`, "no comió nada" (0) y "la query está rota" (null) serían el mismo valor.
+- **Índices**: `@Index` en `DiaryEntry.dayKey`, y un `@Index` único en el barcode del catálogo
+  (`FoodProductEntity.barcode`; el tipo `CatalogEntry` que menciona la spec no existe). La foreign
+  key del diario al catálogo usa **`onDelete = RESTRICT`**, no `CASCADE`: cascadear desde una caché
+  podable hacia el diario del usuario es pérdida de datos silenciosa causada por housekeeping
+  rutinario. Dos tests lo fijan.
+- **DB versionada** con estrategia de migración desde el día uno. `version = 1`,
+  `exportSchema = true`, **sin** `fallbackToDestructiveMigration()`.
+
+**Verificación**: `:app:assembleDebug` y `:app:testDebugUnitTest --rerun` en verde. **91 tests, 0
+fallos, 0 salteados** (baseline 33 + 58 nuevos), contados desde los XML de JUnit. Robolectric 4.17
+requirió `--add-exports=java.base/jdk.internal.access=ALL-UNNAMED` en la tarea `Test` porque el JBR de
+la máquina es JDK 25.
+
+**Desviaciones de la spec, con el código ganando (§7)**: `CatalogEntry` no existe →
+`FoodProductEntity`; el cacheo de `LOCAL-*` son fixtures de `PreviewData`, no datos reales;
+`days/{date}` lista 4 campos pero `DailySummary` exige 7 y explica por qué → los 7;
+`ProfileRepository` declara 4 métodos pero 2 son de onboarding y necesitan una 5ta tabla (FF-5/FF-7)
+→ no agregada.
+
+**Pendiente**: `app/schemas/` no está commiteado (sin esa línea base no hay migraciones validables),
+y Room todavía **no se inicializa** en `RacionApplication` (FF-2, de Daniel) ni se cablea en
+`AppContainer`. Los DAOs están probados pero nadie los consume: la app sigue sin persistir hasta que
+exista el wiring. Eso es un paso posterior, no un defecto de J3/J4.
 
 ### J5 · Mergear a `main`
 Sólo con `:app:assembleDebug` y `:app:testDebugUnitTest` en verde.

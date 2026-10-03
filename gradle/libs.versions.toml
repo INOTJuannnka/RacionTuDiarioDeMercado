@@ -24,6 +24,23 @@ coroutines = "1.9.0"
 turbine = "1.2.0"
 mlkitBarcodeScanning = "17.3.0"
 
+# Room (DB-1..DB-6). 2.8.5 is the newest stable release on Google Maven.
+room = "2.8.5"
+# KSP, never KAPT: kapt is deprecated on Kotlin 2.2 and Room 3 demands KSP regardless.
+# NOT the `2.2.10-2.0.2` matching our `kotlin`: AGP 9.4 turns on built-in Kotlin, and the
+# 2.2.x KSP line refuses it ("Using kotlin.sourceSets DSL to add Kotlin sources is not
+# allowed with built-in Kotlin"). AGP 9 support only landed in KSP 2.3.x. Verified working
+# against `kotlin = 2.2.10` below; kspDebugKotlin runs clean. Bump both together.
+ksp = "2.3.12"
+# Robolectric 4.17 is the first release with SDK 37 support, and SDK 37 is our compileSdk.
+robolectric = "4.17"
+# androidx.test:core is what hands Robolectric the Android runtime jar. 1.6.1 is the newest
+# stable 1.6.x; 1.7.0 exists but is a major bump with nothing forcing it today.
+androidxTestCore = "1.6.1"
+# Google Sign-In libs. Cataloged and deliberately UNUSED: the ratified strategy is
+# anonymous-first + Email/Password, so Google Sign-In is another lane's future work.
+credentials = "1.3.0"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -55,9 +72,20 @@ squareup-moshi = { group = "com.squareup.moshi", name = "moshi", version.ref = "
 # without this factory Moshi looks for a generated adapter, does not find it, and throws
 # at the first deserialization. Remove it once KSP codegen is wired (OFF-1).
 squareup-moshi-kotlin = { group = "com.squareup.moshi", name = "moshi-kotlin", version.ref = "moshi" }
-# Processor artifact. Inert until KSP is applied; it is the codegen path we migrate to later.
+# Processor artifact. KSP IS applied now (DB-1), so this is no longer inert: adding
+# `ksp(libs.squareup.moshi.kotlin.codegen)` makes the DTOs' @JsonClass(generateAdapter)
+# annotations produce real adapters. It is NOT wired yet because that is OFF-1's reasoning
+# to change (it decides whether to drop KotlinJsonAdapterFactory), so the runtime
+# `squareup-moshi-kotlin` factory stays until Brayan makes that call.
 squareup-moshi-kotlin-codegen = { group = "com.squareup.moshi", name = "moshi-kotlin-codegen", version.ref = "moshi" }
 squareup-okhttp-logging-interceptor = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
+# MockWebServer for B6/Q-4 (Brayan's lane). Declared here because this file has a single owner
+# by Sprint-1 §1.1: teammates ask, Julian lands it. TEST-only, so it is wired with
+# `testImplementation(...)` and never reaches the APK.
+# version.ref = "okhttp" on purpose — MockWebServer ships from the same OkHttp project at the
+# same version. Pinning it separately would open a window where the mock server and the client
+# under test disagree on the wire protocol, and the failure would look like an app bug.
+squareup-okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
 squareup-retrofit-converter-moshi = { group = "com.squareup.retrofit2", name = "converter-moshi", version.ref = "retrofit" }
 
 # Images
@@ -73,16 +101,37 @@ firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics
 # Barcode scanning
 play-services-mlkit-barcode-scanning = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcodeScanning" }
 
+# Room. These DO carry a version, unlike the Compose entries above: the Compose BOM does not
+# constrain androidx.room (verified against its POM), and a versionless Room entry fails
+# resolution with "Could not find androidx.room:room-runtime:." and an empty version.
+# The processor is NOT a test artifact: it runs at compile time, which is why
+# app/build.gradle.kts wires it with `ksp(...)` instead of `kspTest(...)`.
+androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+androidx-room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
+
+# Google Sign-In. Present, versioned, and unused on purpose — see the `credentials` note above.
+androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
+androidx-credentials-play-services-auth = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
+googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version = "1.1.1" }
+
 # Coroutines
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 
 # Testing
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }
+# Robolectric runs the DAO tests on the JVM. It needs BOTH this and androidx.test:core:
+# robolectric alone ships the runner, test:core ships the android.jar shadow it loads.
+org-robolectric-robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidxTestCore" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+# KSP must be applied AFTER the Android plugin: it hooks the Kotlin compile tasks AGP creates.
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 # TODO(FF-3): apply this plugin ONLY after a real google-services.json exists in app/.
 # Applying it without that file HARD FAILS the build at the `processDebugGoogleServices`
 # task, so it stays declared-but-unapplied until the Firebase project is created.

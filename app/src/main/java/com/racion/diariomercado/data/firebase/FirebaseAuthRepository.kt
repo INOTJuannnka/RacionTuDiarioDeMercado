@@ -1,170 +1,356 @@
 package com.racion.diariomercado.data.firebase
 
+import com.google.firebase.auth.EmailAuthProvider
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.auth.FirebaseUser
+import com.google.android.gms.tasks.Task
+import com.racion.diariomercado.core.AppError
 import com.racion.diariomercado.core.AppResult
+import com.racion.diariomercado.domain.repository.AuthErrorMarkers
 import com.racion.diariomercado.domain.repository.AuthRepository
 import com.racion.diariomercado.domain.repository.AuthState
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * [AuthRepository] backed by Firebase Authentication.
  *
- * This is SCAFFOLDING, not an implementation. It exists so the login screens, the [AuthRepository]
- * contract and the navigation graph can be built and reviewed before a single credential is sent
- * anywhere; every method that would touch Firebase is a `NotImplementedError`.
+ * The whole anonymous-first strategy lives in this file, and it is two Firebase facts doing all
+ * the work:
+ * - `signInAnonymously()` mints a real `uid` immediately, with no form, so a new user can read and
+ *   write Firestore on the very first launch.
+ * - `linkWithCredential` attaches a credential to that same `FirebaseUser` and **keeps the uid**,
+ *   so claiming the account later moves no document and needs no merge. That is the entire reason
+ *   the app could be anonymous-first at all.
  *
- * ## Why [authState] returns a value while the commands throw
- * [authState] is a one-line `flowOf(AuthState.Unauthenticated)`, which is honest for a stub: with
- * no Firebase session restored, "not signed in" is the correct emission, and it lets the login
- * screens render and be previewed today. The commands have no honest stub value — there is no
- * [AppResult] that means "authenticate later" — so they throw, matching every other Firestore
- * stub in this package.
+ * ## No constructor argument, on purpose
+ * This takes no [FirebaseAuth] and calls `FirebaseAuth.getInstance()` through [firebaseAuth]
+ * internally. `AppContainer.authRepository` is written as `FirebaseAuthRepository()` and that call
+ * site does not change.
  *
- * DEVIATION FROM THE CONTRACT, deliberate and temporary: a real `flowOf` **completes** after one
- * emission, while [AuthRepository.authState] promises a flow that never completes. Nothing breaks
- * today because the only consumer would treat completion as "still unauthenticated", but this
- * must be replaced by a real `callbackFlow` over `FirebaseAuth.addAuthStateListener` (FF-4), not
- * kept as-is.
+ * The handle is resolved LAZILY, inside each method, never in a constructor or a property
+ * initialiser. `getInstance()` throws `IllegalStateException` when `FirebaseApp` has not been
+ * initialised — which is exactly the state the module is in until FF-2/FF-3 land — and resolving it
+ * eagerly would make merely *constructing* the repository throw, taking down every screen that only
+ * wants to render. Resolved per call, the same missing-initialisation situation becomes a per-call
+ * failure that [authState] already knows how to absorb and that the commands can report as an
+ * [AppResult].
  *
- * TODO(FF-4): implement all five members against `FirebaseAuth.getInstance()`. The order they
- * have to land in is not arbitrary: the anonymous entry point exists so a new user has a `uid`
- * before the first Firestore read, and the promotion step exists so that `uid` can later be
- * claimed **without moving any data**, because `linkWithCredential` preserves it. `signUp` is the
- * superseded path and is kept only until its callers migrate; it is not to be extended.
+ * ## No `.await()`, on purpose
+ * [awaitTask] below bridges `Task` to `suspend` by hand instead of using
+ * `kotlinx.coroutines.tasks.await`. That extension lives in `kotlinx-coroutines-play-services`,
+ * which is a **separate artifact** from `kotlinx-coroutines-android` and is NOT on this module's
+ * classpath — only `implementation(libs.kotlinx.coroutines.android)` is
+ * (`app/build.gradle.kts`). Writing `import kotlinx.coroutines.tasks.await` here is a compile error,
+ * not a runtime one, so the hand-rolled bridge is what keeps FF-4 inside its lane. If that artifact
+ * is ever added, delete [awaitTask] and use `.await()`; nothing else has to change.
+ *
+ * ## Why [Task] is imported from `com.google.android.gms.tasks`
+ * `com.google.firebase.tasks.Task` is only a deprecated *typealias* for the GMS class, published in
+ * the separate `com.google.firebase:firebase-tasks` artifact. This module has `play-services-tasks`
+ * (a transitive dependency of `firebase-auth`) but not `firebase-tasks`, so the Firebase-flavoured
+ * import does not resolve while the GMS one is the identical type. Verified against
+ * `:app:dependencies --configuration debugCompileClasspath`.
  */
 internal class FirebaseAuthRepository : AuthRepository {
 
     /**
-     * TODO(FF-4): bridge `FirebaseAuth.addAuthStateListener` into a `callbackFlow` that emits
-     * [AuthState.Authenticated] when the current user has a permanent credential,
-     * [AuthState.Anonymous] when `currentUser != null` but `isAnonymous` is true, and
-     * [AuthState.Unauthenticated] otherwise, closing with
-     * `awaitClose { removeAuthStateListener(listener) }`. The listener MUST be removed on close or
-     * it leaks the collector for the lifetime of the process.
+     * The session, re-emitting on every change, resolving the THREE states the contract requires.
      *
-     * The three-way split is the whole point: mapping every non-null `currentUser` to
-     * [AuthState.Authenticated] would erase [AuthState.Anonymous] and make a throwaway session
-     * indistinguishable from a permanent one, which is the exact confusion the state exists to
-     * prevent. `ERROR_ANONYMOUS_USER_FIRED` arriving through the listener must land on
-     * [AuthState.Unauthenticated] — the uid is gone, so there is nothing left to represent.
+     * ## How the callbackFlow works
+     * Firebase's `addAuthStateListener` is a *push* API: it hands you a callback and there is no
+     * coroutine to suspend. `callbackFlow` is the adapter for exactly that shape. Its block runs
+     * once, on collection, and gives a `ProducerScope` whose `trySend` pushes a value downstream; the
+     * block itself is then expected to suspend, and it does so on `awaitClose`.
+     *
+     * `awaitClose { ... }` is what makes the flow's lifetime honest. It suspends the producer forever
+     * and runs its lambda **when the collector goes away** — cancellation, a `take(1)`, the ViewModel
+     * being cleared. That is the only correct place to call `removeAuthStateListener`, because the
+     * listener holds a strong reference to the collector: without the removal it leaks for the
+     * lifetime of the process, and Firebase keeps firing into a scope nobody reads.
+     *
+     * It is also what stops the flow from **completing**. A `callbackFlow` that returns instead of
+     * suspending closes the channel, and a closed channel completes the flow — the exact defect the
+     * old `flowOf(AuthState.Unauthenticated)` stub had. `awaitClose` is not optional bookkeeping
+     * here; it is the reason `authState` upholds "never completes".
+     *
+     * ## Why it cannot throw or complete
+     * Three independent things enforce the contract:
+     * - `.catch { emit(AuthState.Unauthenticated) }` turns ANY upstream failure — including a
+     *   synchronous `IllegalStateException` from `getInstance()` when Firebase is not initialised,
+     *   which `callbackFlow` rethrows into the collector — into an ordinary *value*. The interface
+     *   promises the flow never throws, so "we could not find out" has to arrive as the
+     *   least-privileged state, not as an exception the screen has to catch.
+     * - `awaitClose` prevents completion.
+     * - `.distinctUntilChanged()` drops repeats. `AuthState`'s members are `data object`s, so they
+     *   compare by identity, and Firebase fires the listener again for changes this flow does not
+     *   model (a token refresh, a `displayName` write). Without this, every one of those recomposes
+     *   every collector for nothing.
+     *
+     * Note `ERROR_ANONYMOUS_USER_FIRED` needs no special case here: the provider fires the listener
+     * with a `null` `currentUser` when it revokes an anonymous account, which is the same thing it
+     * does on an ordinary sign-out, and [toAuthState] already maps `null` to
+     * [AuthState.Unauthenticated]. There is no state left to represent, so there is nothing else to
+     * do.
      */
-    override val authState: Flow<AuthState> = flowOf(AuthState.Unauthenticated)
+    override val authState: Flow<AuthState> = callbackFlow {
+        val auth = firebaseAuth()
+
+        val listener = FirebaseAuth.AuthStateListener { authInstance ->
+            // trySend, not send: it cannot suspend, and more importantly it cannot throw on a closed
+            // channel. The listener can fire once more during teardown, after the collector has
+            // gone, and a throwing send there would surface as an exception nobody is left to catch.
+            trySend(authInstance.currentUser.toAuthState())
+        }
+
+        auth.addAuthStateListener(listener)
+
+        // Suspends the producer indefinitely; the removal runs on cancellation. See the KDoc above.
+        awaitClose { auth.removeAuthStateListener(listener) }
+    }
+        .catch { emit(AuthState.Unauthenticated) }
+        .distinctUntilChanged()
 
     /**
-     * TODO(FF-4): `FirebaseAuth.getInstance().signInAnonymously()`. This is the DEFAULT entry
-     * point: it has to be called before any Firestore read or write, because the security rules
-     * and the `users/{uid}` document paths are both keyed on a `currentUser` that does not exist
-     * yet. A read attempted first is denied by the rules, and that permission error reads like a
-     * rules bug rather than a missing sign-in.
+     * Mints the anonymous session the app starts from. See [AuthRepository.signInAnonymously] for
+     * why this has to run before any Firestore call.
      *
-     * It is a real network call against the provider, so it can fail: map
-     * `ERROR_NETWORK_REQUEST_FAILED` to [com.racion.diariomercado.core.AppError.Network] and
-     * `ERROR_TOO_MANY_REQUESTS` to [com.racion.diariomercado.core.AppError.RateLimited], with the
-     * rest falling through to [com.racion.diariomercado.core.AppError.Unknown] carrying the
-     * exception for logging only. There is no local fallback here — a failure is a failure, and
-     * the caller has to show it rather than quietly continue unsigned.
+     * A failure here is NOT swallowed: there is no local session to fall back on, so the caller has
+     * to show it rather than continue unsigned and discover the problem later as a security-rules
+     * permission error on the first read.
      */
-    override suspend fun signInAnonymously(): AppResult<Unit> =
-        // TODO(FF-4): implement. Note this throws NotImplementedError (an Error, NOT an Exception):
-        // the documented "no method may throw" contract applies to REAL implementations, and callers
-        // writing `catch (e: Exception)` will not catch this stub. Remove this method body entirely
-        // when the implementation lands.
-        throw NotImplementedError(
-            "FirebaseAuthRepository.signInAnonymously is not implemented yet (FF-4)"
-        )
+    override suspend fun signInAnonymously(): AppResult<Unit> = runAuthCall {
+        firebaseAuth().signInAnonymously().awaitTask()
+    }
 
     /**
-     * TODO(FF-4): build `EmailAuthProvider.credential(email, password)` and link it to the CURRENT
-     * user with `FirebaseAuth.getInstance().currentUser!!.linkWithCredential(credential)`.
+     * Claims the CURRENT account by linking an email+password credential to it.
      *
-     * Linking rather than creating is the entire reason this app can be anonymous-first: the linked
-     * user KEEPS ITS `uid`, so every document already written under the anonymous account stays
-     * reachable and **no Firestore data moves**. Do not write this as
-     * `createUserWithEmailAndPassword` followed by a copy — that is the expensive version, and it
-     * is the thing this design exists to avoid.
+     * `linkWithCredential`, not `createUserWithEmailAndPassword`. Linking returns a `FirebaseAuthResult`
+     * whose `FirebaseUser` is the SAME instance, with the SAME uid — the credential is *attached to*
+     * the account rather than a new account being minted, so every document already written under
+     * the anonymous uid stays reachable and nothing is copied. Creating a second account and
+     * migrating to it is the expensive version of this, and the one this design exists to avoid.
      *
-     * The `!!` is justified by the contract, not by optimism: the method is only valid while
-     * [AuthState.Anonymous]. Guard the call site on [AuthRepository.authState] and let the
-     * `!!` document the invariant for anyone who does not.
-     *
-     * Error mapping, and one code that must NOT be generic:
-     * - `ERROR_EMAIL_ALREADY_IN_USE` needs its own case and its own actionable message, NOT a fall
-     *   through to [com.racion.diariomercado.core.AppError.Unknown]. It means the address already
-     *   belongs to a different account, so the only way forward is to sign in with it — a generic
-     *   "unexpected error" sends the user in circles. v1 **deliberately does not merge the two
-     *   data trees**; the caller surfaces the honest message instead. See the `v1 non-goal` note on
-     *   [AuthRepository.promoteToEmailAccount].
-     * - `ERROR_CREDENTIAL_ALREADY_IN_USE` is the same situation seen from the credential's side.
-     * - `ERROR_INVALID_EMAIL` / `ERROR_WEAK_PASSWORD` should be unreachable — the ViewModel
-     *   validates both first — so map them, but log them: reaching them is a validation gap.
-     * - `ERROR_NETWORK_REQUEST_FAILED` -> [com.racion.diariomercado.core.AppError.Network],
-     *   `ERROR_TOO_MANY_REQUESTS` -> [com.racion.diariomercado.core.AppError.RateLimited].
+     * The guard is a real `?:`, not the `!!` the stub's KDoc suggested, because the exception this
+     * class is written to be robust against is exactly the one a `!!` would throw here. See the
+     * class KDoc on lazy resolution: on an uninitialised Firebase, `currentUser` is unreachable and
+     * the honest answer is a value, not a crash. It is reported as
+     * [AppError.Unknown] because a missing session is an invariant violation on the caller's side —
+     * [ProfileViewModel] gates the call on [AuthState.Anonymous] — not a server condition.
      */
-    override suspend fun promoteToEmailAccount(email: String, password: String): AppResult<Unit> =
-        // TODO(FF-4): implement. Note this throws NotImplementedError (an Error, NOT an Exception):
-        // the documented "no method may throw" contract applies to REAL implementations, and callers
-        // writing `catch (e: Exception)` will not catch this stub. Remove this method body entirely
-        // when the implementation lands.
-        throw NotImplementedError(
-            "FirebaseAuthRepository.promoteToEmailAccount is not implemented yet (FF-4)"
-        )
+    override suspend fun promoteToEmailAccount(
+        email: String,
+        password: String
+    ): AppResult<Unit> {
+        val currentUser = runCatching { firebaseAuth().currentUser }.getOrNull()
+            ?: return AppResult.Failure(AppError.Unknown(cause = null))
+
+        return runAuthCall {
+            val credential = EmailAuthProvider.getCredential(email, password)
+            currentUser.linkWithCredential(credential).awaitTask()
+        }
+    }
 
     /**
-     * TODO(FF-4): `FirebaseAuth.getInstance().signInWithEmailAndPassword(email, password)`,
-     * mapping `FirebaseAuthException` error codes onto [com.racion.diariomercado.core.AppError]
-     * (`ERROR_NETWORK_REQUEST_FAILED` -> [com.racion.diariomercado.core.AppError.Network],
-     * `ERROR_TOO_MANY_REQUESTS` -> [com.racion.diariomercado.core.AppError.RateLimited], and a
-     * wrong-credentials code that has no matching case -> [com.racion.diariomercado.core.AppError.Unknown]
-     * carrying the exception for logging only).
+     * Signs in to an account that already exists — the returning-user path.
      *
-     * Note that `ERROR_WRONG_PASSWORD` and `ERROR_USER_NOT_FOUND` are deliberately indistinguishable
-     * here: reporting which one it was tells an attacker whether an address is registered, and the
-     * user cannot act on the difference anyway. One honest message, no detail.
+     * [ERROR_EMAIL_ALREADY_IN_USE] and [ERROR_CREDENTIAL_ALREADY_IN_USE] both mean "that credential
+     * belongs to somebody else", which is the single case `promoteToEmailAccount` cannot serve; both
+     * map to the one marker [AppError.Server] carries for it, so the claim screen can point the user
+     * at signing in instead of at a dead end.
+     *
+     * [ERROR_WRONG_PASSWORD] and [ERROR_USER_NOT_FOUND] deliberately share the generic branch:
+     * distinguishing them tells an attacker whether an address is registered, and the user cannot act
+     * on the difference anyway.
      */
-    override suspend fun signIn(email: String, password: String): AppResult<Unit> =
-        // TODO(FF-4): implement. Note this throws NotImplementedError (an Error, NOT an Exception):
-        // the documented "no method may throw" contract applies to REAL implementations, and callers
-        // writing `catch (e: Exception)` will not catch this stub. Remove this method body entirely
-        // when the implementation lands.
-        throw NotImplementedError(
-            "FirebaseAuthRepository.signIn is not implemented yet (FF-4)"
-        )
+    override suspend fun signIn(email: String, password: String): AppResult<Unit> = runAuthCall {
+        firebaseAuth().signInWithEmailAndPassword(email, password).awaitTask()
+    }
 
     /**
-     * TODO(FF-4): `FirebaseAuth.getInstance().createUserWithEmailAndPassword(email, password)`.
-     * `ERROR_EMAIL_ALREADY_IN_USE` is the one that matters for the register screen: it must
-     * render "esa cuenta ya existe", not a generic failure, so it needs its own case and its own
-     * message rather than falling through to [com.racion.diariomercado.core.AppError.Unknown].
-     *
-     * SUPERSEDED by [promoteToEmailAccount], which is the ratified way to get an email account and
-     * does not orphan the anonymous data. Implement this only to keep `RegisterScreen` compiling
-     * until its caller migrates; do not extend it, and expect it to be deleted. See the KDoc on
-     * [AuthRepository.signUp].
+     * Creates a brand-new account. **Superseded** by [promoteToEmailAccount] and kept only because
+     * `LoginViewModel` and `RegisterScreen` still call it. See the warning on [AuthRepository.signUp]:
+     * do not build anything new on it.
      */
-    override suspend fun signUp(email: String, password: String): AppResult<Unit> =
-        // TODO(FF-4): implement. Note this throws NotImplementedError (an Error, NOT an Exception):
-        // the documented "no method may throw" contract applies to REAL implementations, and callers
-        // writing `catch (e: Exception)` will not catch this stub. Remove this method body entirely
-        // when the implementation lands.
-        throw NotImplementedError(
-            "FirebaseAuthRepository.signUp is not implemented yet (FF-4)"
-        )
+    override suspend fun signUp(email: String, password: String): AppResult<Unit> = runAuthCall {
+        firebaseAuth().createUserWithEmailAndPassword(email, password).awaitTask()
+    }
 
     /**
-     * TODO(FF-4): `FirebaseAuth.getInstance().signOut()`. Signing out with no current user is
-     * already a no-op there, so it can be reported as a plain success without a pre-check.
+     * Ends the session.
      *
-     * Nothing in this method has to branch on the session kind — Firebase destroys an anonymous
-     * user on signOut the same way either way — but the CALLER must: on an anonymous session this
-     * irreversibly destroys the `uid` and all its Firestore data, so the UI has to confirm first.
-     * See the warning on [AuthRepository.signOut].
+     * Signing out with no current user is already a no-op inside Firebase, so it is reported as a
+     * plain success without a pre-check — the end state the caller cares about is already correct.
+     *
+     * Nothing here branches on the session kind, and that is the trap: Firebase destroys an
+     * anonymous account on signOut exactly as it ends a permanent one. The **caller** has to branch.
+     * On [AuthState.Anonymous] this irreversibly destroys the uid and every Firestore document under
+     * it, so `ProfileScreen` confirms with a dialog that names the loss before it gets here. See the
+     * warning on [AuthRepository.signOut].
      */
-    override suspend fun signOut(): AppResult<Unit> =
-        // TODO(FF-4): implement. Note this throws NotImplementedError (an Error, NOT an Exception):
-        // the documented "no method may throw" contract applies to REAL implementations, and callers
-        // writing `catch (e: Exception)` will not catch this stub. Remove this method body entirely
-        // when the implementation lands.
-        throw NotImplementedError(
-            "FirebaseAuthRepository.signOut is not implemented yet (FF-4)"
-        )
+    override suspend fun signOut(): AppResult<Unit> = runAuthCall {
+        firebaseAuth().signOut()
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Internals
+    // -----------------------------------------------------------------------------------------
+
+    /**
+     * Resolved per call, never eagerly. See the class KDoc: an eager `getInstance()` would make
+     * constructing this repository throw while Firebase is uninitialised.
+     */
+    private fun firebaseAuth(): FirebaseAuth = FirebaseAuth.getInstance()
+
+    /**
+     * Runs a Firebase call and folds both outcomes into the [AppResult] the contract mandates.
+     *
+     * The block returns the *awaited* value, not a [Task]: it is declared without `suspend` only
+     * because this function is `inline`, which lets the `awaitTask()` call inside each block sit in the
+     * caller's own suspend context. Marking it `suspend` would work identically and say so more
+     * honestly, but then the `try` would not wrap the suspension point without a `coroutineScope`, so
+     * an inline block is the shape that actually gives the guarantee below: **the call is inside the
+     * `try`.** A helper that returned a `Task` and awaited it outside would let a network failure
+     * escape the `catch`, which is the one thing the "no method may throw" contract forbids.
+     *
+     * A raw exception must never escape a repository (see `core/AppResult.kt`), so the `catch` is
+     * exhaustive over [Exception]. `getInstance()`'s `IllegalStateException` is included, which is
+     * what turns "FF-2 has not landed yet" into a renderable message on the login screen instead of
+     * a crash.
+     *
+     * Note it catches [Exception] and not [Throwable]: the stubs this replaces threw
+     * `NotImplementedError`, an `Error`, and a `catch (e: Exception)` would not have caught them.
+     * Nothing here throws an `Error`.
+     */
+    private inline fun <T> runAuthCall(block: () -> T): AppResult<Unit> = try {
+        block()
+        AppResult.Success(Unit)
+    } catch (e: Exception) {
+        AppResult.Failure(e.toAppError())
+    }
+
+    /**
+     * The THREE-way split, and the reason this flow is not a `User?`.
+     *
+     * `null` and `isAnonymous` are different facts, not the same one twice: both carry a uid and
+     * both read and write Firestore, but only the second can be destroyed by a sign-out the user did
+     * not realise was destructive. Collapsing them into `Authenticated` would leave the profile
+     * screen with no way to know when to warn, which is the one thing that warning exists for.
+     *
+     * `else` covers every permanent-credential provider (email/password today, phone and Google
+     * later): all of them are recoverable accounts, so one branch is correct and adding a provider
+     * does not touch this function.
+     */
+    private fun FirebaseUser?.toAuthState(): AuthState = when {
+        this == null -> AuthState.Unauthenticated
+        isAnonymous -> AuthState.Anonymous
+        else -> AuthState.Authenticated
+    }
+
+    /**
+     * Maps a Firebase failure onto the shared taxonomy.
+     *
+     * Every code that represents a distinct user situation gets its own case, because the message
+     * the user reads is the only thing telling them what to do next and "algo salió mal" throws that
+     * away. The fall-through keeps the exception for logging only, per `AppError.Unknown`'s contract.
+     *
+     * ## The two collision cases, and why they carry a marker instead of just a message
+     * `ERROR_EMAIL_ALREADY_IN_USE` and `ERROR_CREDENTIAL_ALREADY_IN_USE` are the one case where a
+     * generic message is a dead end: the address the user typed already belongs to a DIFFERENT
+     * account, and the only way forward is to sign in with it. v1 deliberately does not merge the
+     * two data trees (see the non-goal on [AuthRepository.promoteToEmailAccount]) — it has to be
+     * *distinguishable* so the claim screen can say so.
+     *
+     * They arrive as `AppError.Server(message = AuthErrorMarkers.CREDENTIAL_ALREADY_IN_USE)`, and the
+     * marker rather than a Spanish sentence is the payload on purpose: `ProfileViewModel` has to
+     * branch on this, and matching on the CONTENT of a user-facing string breaks silently the first
+     * time someone fixes the wording. See the KDoc on `AuthErrorMarkers` for why the token lives in
+     * Domain instead of here.
+     *
+     * Note [AppError.Server.code] is left `null` throughout: it is an [Int] for an HTTP status, and a
+     * Firebase `errorCode` is a `String`. Forcing one into the other would be a lie the type system
+     * is there to prevent.
+     */
+    private fun Throwable.toAppError(): AppError = when {
+        this !is FirebaseAuthException -> AppError.Unknown(this)
+
+        errorCode == ERROR_EMAIL_ALREADY_IN_USE ||
+            errorCode == ERROR_CREDENTIAL_ALREADY_IN_USE ->
+            AppError.Server(code = null, message = AuthErrorMarkers.CREDENTIAL_ALREADY_IN_USE)
+
+        errorCode == ERROR_NETWORK_REQUEST_FAILED -> AppError.Network
+        errorCode == ERROR_TOO_MANY_REQUESTS -> AppError.RateLimited
+
+        // A provider that is switched off in the console. Checked BEFORE the email/password cases
+        // below on purpose: `OPERATION_NOT_ALLOWED` is what Firebase answers when the *Email/Password*
+        // provider is disabled, and mapping it as a generic Server error would tell the user to
+        // "try again" about something that cannot succeed on a retry.
+        errorCode == ERROR_ANONYMOUS_LOGIN_DISABLED || errorCode == ERROR_OPERATION_NOT_ALLOWED ->
+            AppError.Server(code = null, message = AuthErrorMarkers.PROVIDER_DISABLED)
+
+        // Both should have been caught by ViewModel validation first, so reaching them is a gap
+        // rather than a user error — hence Unknown, which keeps the exception for the log.
+        errorCode == ERROR_INVALID_EMAIL || errorCode == ERROR_WEAK_PASSWORD ->
+            AppError.Unknown(this)
+
+        errorCode == ERROR_USER_NOT_FOUND || errorCode == ERROR_WRONG_PASSWORD ->
+            AppError.Server(code = null, message = AuthErrorMarkers.WRONG_CREDENTIALS)
+
+        else -> AppError.Unknown(this)
+    }
 }
+
+/**
+ * Bridges a Firebase [Task] to a `suspend` function.
+ *
+ * This is a local stand-in for `kotlinx.coroutines.tasks.await`. It is the piece Gemini's version
+ * silently assumed: that extension is published in `kotlinx-coroutines-play-services`, a separate
+ * artifact from `kotlinx-coroutines-android`, and it is not on this module's classpath. Importing
+ * it would not compile.
+ *
+ * `addOnCompleteListener` fires on the main thread once the task settles, which is why the
+ * continuation is resumed there and the caller resumes on its own dispatcher. If the coroutine is
+ * already cancelled when the task settles, [kotlinx.coroutines.CancellableContinuation.resume]
+ * reports a benign `IllegalStateException` about resuming after cancellation rather than corrupting
+ * state, so no extra guard is needed on the resume path.
+ *
+ * Cancellation cannot be pushed into the task: a Firebase write already handed to the network layer
+ * is not retractable, so the honest `invokeOnCancellation` block is empty. The task still completes
+ * and its result is discarded — which is exactly right for a sign-in, because the *session* is what
+ * persists, not the return value, and [AuthRepository.authState] is the source of truth for it.
+ */
+private suspend fun <T> Task<T>.awaitTask(): T = suspendCancellableCoroutine { continuation ->
+    addOnCompleteListener { task ->
+        val error = task.exception
+        if (error != null) {
+            continuation.resumeWithException(error)
+        } else {
+            continuation.resume(task.result)
+        }
+    }
+    // The task cannot be cancelled, so there is nothing to undo here. See the KDoc.
+    continuation.invokeOnCancellation { }
+}
+
+// --- Firebase error codes, as literals -------------------------------------------------------
+// FirebaseAuthException exposes these as constants, but they are not on the public API surface of
+// every SDK version, and a string literal that fails to match only degrades to AppError.Unknown
+// rather than not compiling. They are private to this file so a rename cannot half-update a caller.
+private const val ERROR_EMAIL_ALREADY_IN_USE = "ERROR_EMAIL_ALREADY_IN_USE"
+private const val ERROR_CREDENTIAL_ALREADY_IN_USE = "ERROR_CREDENTIAL_ALREADY_IN_USE"
+private const val ERROR_NETWORK_REQUEST_FAILED = "ERROR_NETWORK_REQUEST_FAILED"
+private const val ERROR_TOO_MANY_REQUESTS = "ERROR_TOO_MANY_REQUESTS"
+private const val ERROR_ANONYMOUS_LOGIN_DISABLED = "ANONYMOUS_LOGIN_DISABLED"
+private const val ERROR_OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
+private const val ERROR_INVALID_EMAIL = "ERROR_INVALID_EMAIL"
+private const val ERROR_WEAK_PASSWORD = "ERROR_WEAK_PASSWORD"
+private const val ERROR_USER_NOT_FOUND = "ERROR_USER_NOT_FOUND"
+private const val ERROR_WRONG_PASSWORD = "ERROR_WRONG_PASSWORD"

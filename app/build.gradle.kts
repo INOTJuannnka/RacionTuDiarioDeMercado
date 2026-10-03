@@ -6,12 +6,20 @@ import org.gradle.process.CommandLineArgumentProvider
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    // TODO(FF-3): do NOT apply `alias(libs.plugins.google.services)` yet.
-    // Applying the com.google.gms.google-services plugin WITHOUT a real
-    // google-services.json in `app/` HARD FAILS the build: the
-    // `processDebugGoogleServices` task throws
-    // "File google-services.json is missing. The Google Services Plugin cannot
-    // function without it." Uncomment only after FF-1/FF-2 are done.
+    // FF-3 DONE. The plugin IS applied, and the precondition it warned about is met: FF-1 landed a
+    // real `app/google-services.json` (project_id `racion-tu-diario-de-mercado`, package_name
+    // `com.racion.diariomercado`), so `processDebugGoogleServices` has a file to read.
+    //
+    // What this plugin actually does, since it is invisible and that is confusing: it does NOT talk
+    // to Firebase and it does NOT authenticate anything. It reads `google-services.json` at BUILD
+    // time and GENERATES resource values from it, which is the only way the runtime can learn the
+    // project id and API key. Without it the file sits in `app/` unread, and `FirebaseApp` has no
+    // project to connect to — the "phone with no SIM card" case.
+    //
+    // Keep this line above the "do not remove" markers: deleting it does not fail the build loudly,
+    // it just makes every Firebase call fail at runtime instead.
+    alias(libs.plugins.google.services)
+
     // KSP, not KAPT (DB-1): kapt is deprecated on Kotlin 2.2 and Room 3 requires KSP
     // regardless, so the migration cost of kapt here is paid twice.
     alias(libs.plugins.ksp)

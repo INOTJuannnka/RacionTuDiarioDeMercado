@@ -31,6 +31,8 @@ import com.racion.diariomercado.ui.screens.MetasScreen
 import com.racion.diariomercado.ui.screens.PerfilDeportivoScreen
 import com.racion.diariomercado.ui.screens.auth.LoginScreen
 import com.racion.diariomercado.ui.screens.auth.LoginViewModel
+import com.racion.diariomercado.ui.screens.auth.ProfileScreen
+import com.racion.diariomercado.ui.screens.auth.ProfileViewModel
 import com.racion.diariomercado.ui.screens.auth.RegisterScreen
 import com.racion.diariomercado.ui.preview.PreviewData
 
@@ -46,6 +48,8 @@ object Routes {
     const val AVISO = "aviso"
     const val LOGIN = "login"
     const val REGISTRO = "registro"
+    /** Account section: the three-state auth branch. See `ProfileScreen`. */
+    const val CUENTA = "cuenta"
 }
 
 /** Mapea un destino de la barra inferior a su ruta (null si no tiene pestaña). */
@@ -190,7 +194,7 @@ fun AppNavigation(
                         launchSingleTop = true
                     }
                 },
-                onOpenLogin = { navController.navigate(Routes.LOGIN) },
+                onOpenLogin = { navController.navigate(Routes.CUENTA) },
                 onNavigate = ::selectTab
             )
         }
@@ -246,11 +250,11 @@ fun AppNavigation(
             )
         }
 
-        // TODO(FF-4): FirebaseAuthRepository throws NotImplementedError for every command, so
-        // BOTH of these screens currently land on the "Ocurrió un error inesperado" branch. That
-        // is the expected behaviour of the skeleton, not a bug to work around here: when FF-4
-        // lands, this wiring needs no change at all.
-        composable(Routes.LOGIN) {
+        // FF-4: `FirebaseAuthRepository` is real now, so both of these screens reach the provider instead of
+// landing on a stub. Until the Anonymous / Email providers are enabled in the Firebase console
+// (J6), BOTH still end on the "Ocurrió un error inesperado" branch — that is the honest report of a
+// provider that rejects the call, not a wiring problem. No change is needed here when J6 lands.
+composable(Routes.LOGIN) {
             // Resolved here, NOT inside `initializer {}`. That block is a plain `() -> ViewModel`,
             // so a @Composable call in it does not compile — and hoisting it also means the
             // container is read once per composition instead of once per factory invocation.
@@ -311,6 +315,52 @@ fun AppNavigation(
                 // popping returns to the already-composed login form with its fields intact
                 // instead of rebuilding it.
                 onBackToLogin = { navController.popBackStack() },
+                onErrorShown = viewModel::onErrorShown
+            )
+        }
+
+        /**
+         * The three-state account branch. Reached from the "Cuenta · Iniciar sesión" row on the
+         * Perfil tab ([Routes.PERFIL]).
+         *
+         * That row used to navigate straight to [Routes.LOGIN], which is wrong now that anonymous
+         * sign-in is the default entry point: most users have a session already, and the login form is
+         * only one of three things this destination can be. Routing it through here first is what lets
+         * the screen decide — an anonymous user gets "Reclamar tu cuenta", a signed-in one gets their
+         * identity, and only a user with NO session is sent on to the login form from inside
+         * [ProfileScreen]'s first branch.
+         *
+         * Note the label on that row still reads "Cuenta · Iniciar sesión" whatever the session is.
+         * Making it dynamic means branching on [com.racion.diariomercado.domain.repository.AuthState]
+         * inside `MetasScreen`, which is another contributor's file — see the TODO at
+         * `MetasScreen.kt:162`. Until then the label over-promises slightly for a signed-in user and
+         * the destination still does the right thing.
+         */
+        composable(Routes.CUENTA) {
+            // Same hoisting as LOGIN/REGISTRO: `initializer {}` is a plain `() -> ViewModel`, so a
+            // @Composable call inside it does not compile.
+            val authRepository = rememberAppContainer().authRepository
+            val viewModel: ProfileViewModel = viewModel(
+                factory = viewModelFactory {
+                    initializer { ProfileViewModel(authRepository) }
+                }
+            )
+            val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+            ProfileScreen(
+                state = state,
+                onEmailChange = viewModel::updateEmail,
+                onPasswordChange = viewModel::updatePassword,
+                onShowClaimForm = viewModel::onShowClaimForm,
+                onDismissClaimForm = viewModel::onDismissClaimForm,
+                onClaimSubmit = viewModel::onClaimSubmit,
+                // Navigation, not a repository call: the login form is its own destination and
+                // `LoginViewModel` already owns the submit. This screen has no form for it.
+                onSignInClick = { navController.navigate(Routes.LOGIN) },
+                onRetrySignIn = viewModel::onRetryAnonymousSignIn,
+                onSignOutClick = viewModel::onSignOutClick,
+                onSignOutConfirmed = viewModel::onDestructiveSignOutConfirmed,
+                onSignOutDismissed = viewModel::onDestructiveSignOutDismissed,
                 onErrorShown = viewModel::onErrorShown
             )
         }

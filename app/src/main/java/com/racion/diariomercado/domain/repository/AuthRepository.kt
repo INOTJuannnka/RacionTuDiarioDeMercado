@@ -220,3 +220,68 @@ interface AuthRepository {
      */
     suspend fun signOut(): AppResult<Unit>
 }
+
+/**
+ * The one error distinction the auth flows cannot express through [com.racion.diariomercado.core.AppError]
+ * alone, given the taxonomy as ratified.
+ *
+ * ## Why this object exists at all
+ * [com.racion.diariomercado.core.AppError] has five members and none of them means "that credential
+ * belongs to a different account". That situation is not cosmetic: it is the one case where the only
+ * correct next step is to sign in with the other account, and every other message sends the user
+ * somewhere useless. See the `v1 non-goal` note on [AuthRepository.promoteToEmailAccount] — v1 does
+ * not merge the two data trees, it has to *say* so.
+ *
+ * `AppError.Server` can carry a human-readable `message`, but a Presentation-layer file matching on
+ * the CONTENT of a Spanish sentence is a smell: an editor fixes the wording and the branch silently
+ * stops firing. So the marker travels as a stable, language-independent token, and the Data layer
+ * writes it while the Presentation layer reads it.
+ *
+ * ## Why it lives in Domain
+ * Both layers need it and neither may import the other. Data maps a provider error code onto it;
+ * Presentation switches on it to pick a sentence. Domain is the only layer both already depend on, so
+ * this is where a shared token has to live — importing `data.firebase` from a ViewModel would invert
+ * the dependency direction and make the Firebase choice unreplaceable, which is the exact thing
+ * `AppContainer`'s KDoc is guarding against.
+ *
+ * Additive only: no member of [AuthRepository] or [AuthState] changed, so implementations and test
+ * fakes are unaffected.
+ */
+object AuthErrorMarkers {
+    /**
+     * Marker for "the email or credential is already attached to a different account". Covers
+     * `ERROR_EMAIL_ALREADY_IN_USE` (the typed address is taken) and
+     * `ERROR_CREDENTIAL_ALREADY_IN_USE` (the same situation seen from the credential's side).
+     *
+     * Deliberately NOT the Firebase code strings: those are a provider's vocabulary, and leaking them
+     * into the Presentation layer would make swapping Firebase for another provider a UI-breaking
+     * change. This token is ours.
+     */
+    const val CREDENTIAL_ALREADY_IN_USE = "auth.credential_already_in_use"
+
+    /**
+     * Marker for "the email or password does not match an account". `ERROR_WRONG_PASSWORD` and
+     * `ERROR_USER_NOT_FOUND` share it on purpose — telling the user which one it was discloses
+     * whether an address is registered, and they cannot act on the difference.
+     */
+    const val WRONG_CREDENTIALS = "auth.wrong_credentials"
+
+    /**
+     * Marker for "this sign-in method is switched off in the Firebase console".
+     *
+     * Covers `ANONYMOUS_LOGIN_DISABLED` and `OPERATION_NOT_ALLOWED`, which are the same situation
+     * seen from two providers.
+     *
+     * ## Why this one matters more than it looks
+     * It is a **configuration** failure, not a user error: the app is fine, the network is fine, the
+     * credentials were never even checked — nobody ever asked Firebase to check them. It is also the
+     * single most likely first failure, because enabling the providers in
+     * `Authentication → Sign-in method` is a manual web-console step that the code cannot do for
+     * itself and that a fresh project ships with switched off.
+     *
+     * Left unmapped it collapses into `AppError.Unknown`, and the user is told "something unexpected
+     * happened" — which is not actionable and sends them looking for a bug in the app instead of a
+     * toggle in a browser. It is worth its own message.
+     */
+    const val PROVIDER_DISABLED = "auth.provider_disabled"
+}

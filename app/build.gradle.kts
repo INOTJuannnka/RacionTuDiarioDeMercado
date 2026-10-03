@@ -40,6 +40,8 @@ class RoomSchemaArgProvider(
 ) : CommandLineArgumentProvider {
     override fun asArguments(): Iterable<String> =
         listOf("room.schemaLocation=${schemaOutputDir.absolutePath}")
+=======
+>>>>>>> 9add44d (Login)
 }
 
 android {

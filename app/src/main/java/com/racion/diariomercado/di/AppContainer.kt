@@ -111,15 +111,23 @@ class AppContainer(private val context: Context) {
     /**
      * [AuthRepository] backed by Firebase Authentication.
      *
-     * The one repository in this container that needs NO constructor argument, because
-     * [FirebaseAuthRepository] has no Firebase handle yet — it cannot touch Firebase until the
-     * google-services plugin is applied (FF-3) and `FirebaseApp` is initialised (FF-2). It takes
-     * none today; it will take `FirebaseAuth.getInstance()` the moment both land, and that is the
-     * one signature change this property will see.
+     * ## Still takes no constructor argument — and now that is a decision, not a gap
+     * FF-2 and FF-3 have landed, so this note previously predicted the opposite: it said the
+     * property "will take `FirebaseAuth.getInstance()` the moment both land, and that is the one
+     * signature change this property will see". That prediction was wrong, and the way it was
+     * wrong is worth keeping.
      *
-     * It is exposed here, rather than left in the TODO block below, because the login screens are
-     * real now and they need an interface to bind against. The dependency is on the INTERFACE
-     * only — see the note in the TODO block.
+     * [FirebaseAuthRepository] resolves the handle **lazily inside each method**, never in a
+     * constructor or a property. So the seam did not move: this property still reads
+     * `FirebaseAuthRepository()` and the wiring below needed no edit when the login landed.
+     * Passing the handle in would have made this container depend on the *timing* of Firebase
+     * initialisation — `FirebaseAuth.getInstance()` throws when `FirebaseApp` is not ready yet —
+     * and a manual DI container is exactly the place where that ordering bug would be hardest to
+     * see. Lazy resolution moves the failure to the call that actually needs it.
+     *
+     * It is exposed here rather than in the TODO block below because the login screens are real
+     * and they need an interface to bind against. The dependency is on the INTERFACE only — see
+     * the note in the TODO block.
      */
     val authRepository: AuthRepository by lazy {
         FirebaseAuthRepository()

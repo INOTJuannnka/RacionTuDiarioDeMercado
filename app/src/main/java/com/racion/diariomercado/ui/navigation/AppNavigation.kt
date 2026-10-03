@@ -1,4 +1,4 @@
-package com.racion.diariomercado.ui.navigation
+﻿package com.racion.diariomercado.ui.navigation
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,6 +20,8 @@ import com.racion.diariomercado.domain.model.DiaryEntry
 import com.racion.diariomercado.domain.model.FoodProduct
 import com.racion.diariomercado.domain.model.MealSlot
 import com.racion.diariomercado.domain.model.Nutrition
+import com.racion.diariomercado.domain.repository.AuthRepository
+import com.racion.diariomercado.domain.repository.SessionDataReassigner
 import com.racion.diariomercado.ui.components.NavDestination
 import com.racion.diariomercado.ui.screens.AgregarScreen
 import com.racion.diariomercado.ui.screens.AvisoScreen
@@ -29,11 +31,13 @@ import com.racion.diariomercado.ui.screens.InformeScreen
 import com.racion.diariomercado.ui.screens.InicioScreen
 import com.racion.diariomercado.ui.screens.MetasScreen
 import com.racion.diariomercado.ui.screens.PerfilDeportivoScreen
+import com.racion.diariomercado.ui.screens.auth.GoogleSignInOutcome
 import com.racion.diariomercado.ui.screens.auth.LoginScreen
 import com.racion.diariomercado.ui.screens.auth.LoginViewModel
 import com.racion.diariomercado.ui.screens.auth.ProfileScreen
 import com.racion.diariomercado.ui.screens.auth.ProfileViewModel
 import com.racion.diariomercado.ui.screens.auth.RegisterScreen
+import com.racion.diariomercado.ui.screens.auth.rememberGoogleSignInLauncher
 import com.racion.diariomercado.ui.preview.PreviewData
 
 /** Rutas de navegación de la app como strings simples. */
@@ -258,13 +262,29 @@ composable(Routes.LOGIN) {
             // Resolved here, NOT inside `initializer {}`. That block is a plain `() -> ViewModel`,
             // so a @Composable call in it does not compile — and hoisting it also means the
             // container is read once per composition instead of once per factory invocation.
-            val authRepository = rememberAppContainer().authRepository
-            val viewModel: LoginViewModel = viewModel(
-                factory = viewModelFactory {
-                    initializer { LoginViewModel(authRepository) }
+            val container = rememberAppContainer()
+            val authRepository = container.authRepository
+            val viewModel: LoginViewModel = remember { LoginViewModel(authRepository, container.sessionDataReassigner) }
+            val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+            // The account picker needs an Activity context, so it cannot live in `LoginScreen`
+            // (which is stateless by design) nor in the repository (which takes no constructor
+            // argument on purpose). The graph owns the trigger, and the screen just reports the tap.
+            val googleSignInLauncher = rememberGoogleSignInLauncher(
+                onIdToken = viewModel::onGoogleSignIn,
+                onOutcome = { outcome ->
+                    when (outcome) {
+                        // A dismissal is silent by design.
+                        GoogleSignInOutcome.CANCELLED -> viewModel.onGoogleSignInCancelled()
+                        GoogleSignInOutcome.PROVIDER_UNAVAILABLE ->
+                            viewModel.onGoogleSignInProviderUnavailable()
+                        // FAILED reuses the blank-token branch on purpose: the sheet came back but
+                        // no readable token did, which is exactly what an empty token means. One
+                        // message, one code path, and the test asserts that no request is sent.
+                        GoogleSignInOutcome.FAILED -> viewModel.onGoogleSignIn("")
+                    }
                 }
             )
-            val state by viewModel.uiState.collectAsStateWithLifecycle()
 
             // The success branch pops the auth flow off the back stack rather than pushing
             // INICIO on top of it: otherwise the back gesture from "Inicio" would return to the
@@ -283,17 +303,23 @@ composable(Routes.LOGIN) {
                 onEmailChange = viewModel::updateEmail,
                 onPasswordChange = viewModel::updatePassword,
                 onSignIn = viewModel::onSignIn,
+                // The flag goes up on the TAP, not when the token comes back: the window that needs
+                // the buttons disabled is the one where the account sheet is on screen, and by the
+                // time a token exists that window is already closed.
+                onGoogleSignIn = {
+                    viewModel.onGoogleSignInRequested()
+                    googleSignInLauncher()
+                },
                 onSignUpClick = { navController.navigate(Routes.REGISTRO) },
+                onGoogleMergeConfirmed = viewModel::onGoogleMergeConfirmed,
+                onGoogleMergeDismissed = viewModel::onGoogleMergeDismissed,
                 onErrorShown = viewModel::onErrorShown
             )
         }
-        composable(Routes.REGISTRO) {
-            val authRepository = rememberAppContainer().authRepository
-            val viewModel: LoginViewModel = viewModel(
-                factory = viewModelFactory {
-                    initializer { LoginViewModel(authRepository) }
-                }
-            )
+composable(Routes.REGISTRO) {
+            val container = rememberAppContainer()
+            val authRepository = container.authRepository
+            val viewModel: LoginViewModel = remember { LoginViewModel(authRepository, container.sessionDataReassigner) }
             val state by viewModel.uiState.collectAsStateWithLifecycle()
 
             LaunchedEffect(state.isLoggedIn) {
@@ -339,13 +365,34 @@ composable(Routes.LOGIN) {
         composable(Routes.CUENTA) {
             // Same hoisting as LOGIN/REGISTRO: `initializer {}` is a plain `() -> ViewModel`, so a
             // @Composable call inside it does not compile.
-            val authRepository = rememberAppContainer().authRepository
+            val container = rememberAppContainer()
+            val authRepository = container.authRepository
             val viewModel: ProfileViewModel = viewModel(
                 factory = viewModelFactory {
-                    initializer { ProfileViewModel(authRepository) }
+                    initializer {
+                        ProfileViewModel(authRepository, container.sessionDataReassigner)
+                    }
                 }
             )
             val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+            // Same launcher, same three-way outcome, as LOGIN — see the comment there for why the
+            // account picker lives in the graph rather than in the screen. What differs is the
+            // consequence, not the mechanism: LOGIN ends on a navigation, whereas here a success has
+            // to close the claim sheet and let `authState` re-render the whole `ProfileScreen`
+            // branch from Anonymous to Authenticated. Nothing to pop, because the user never left
+            // this destination.
+            val googleSignInLauncher = rememberGoogleSignInLauncher(
+                onIdToken = viewModel::onGoogleSignIn,
+                onOutcome = { outcome ->
+                    when (outcome) {
+                        GoogleSignInOutcome.CANCELLED -> viewModel.onGoogleSignInCancelled()
+                        GoogleSignInOutcome.PROVIDER_UNAVAILABLE ->
+                            viewModel.onGoogleSignInProviderUnavailable()
+                        GoogleSignInOutcome.FAILED -> viewModel.onGoogleSignIn("")
+                    }
+                }
+            )
 
             ProfileScreen(
                 state = state,
@@ -354,6 +401,9 @@ composable(Routes.LOGIN) {
                 onShowClaimForm = viewModel::onShowClaimForm,
                 onDismissClaimForm = viewModel::onDismissClaimForm,
                 onClaimSubmit = viewModel::onClaimSubmit,
+                onClaimIntoExistingAccount = viewModel::onClaimIntoExistingAccount,
+                onSwitchClaimPath = viewModel::onSwitchClaimPath,
+                onGoogleSignInClick = googleSignInLauncher,
                 // Navigation, not a repository call: the login form is its own destination and
                 // `LoginViewModel` already owns the submit. This screen has no form for it.
                 onSignInClick = { navController.navigate(Routes.LOGIN) },
@@ -361,6 +411,8 @@ composable(Routes.LOGIN) {
                 onSignOutClick = viewModel::onSignOutClick,
                 onSignOutConfirmed = viewModel::onDestructiveSignOutConfirmed,
                 onSignOutDismissed = viewModel::onDestructiveSignOutDismissed,
+                onGoogleMergeConfirmed = viewModel::onGoogleMergeConfirmed,
+                onGoogleMergeDismissed = viewModel::onGoogleMergeDismissed,
                 onErrorShown = viewModel::onErrorShown
             )
         }

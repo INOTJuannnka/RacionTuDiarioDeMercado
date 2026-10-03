@@ -76,6 +76,7 @@ class MoshiAdapterTest {
         ingredientsText = "Masa de maíz tierno asada, rellena con queso campesino.",
         nutritionGrades = "d",
         imageFrontUrl = "https://example.com/arepa.jpg",
+        countriesTags = "en:colombia",
         nutriments = nutriments
     )
 
@@ -199,5 +200,15 @@ class MoshiAdapterTest {
     fun moshiConverterFactoryAcceptsTheContainerMoshi() {
         val converterFactory = MoshiConverterFactory.create(moshiAsBuiltByAppContainer())
         assertNotNull(converterFactory)
+    }
+
+    @Test
+    fun countriesTagsRoundTripThroughMoshi() {
+        val adapter = moshiAsBuiltByAppContainer().adapter(OffProductDto::class.java)
+        val withTags = product.copy(countriesTags = "en:colombia,es:ecuador")
+        val json = adapter.toJson(withTags)
+        assertTrue(json.contains("\"countries_tags\":\"en:colombia,es:ecuador\""))
+        val parsed = requireNotNull(adapter.fromJson(json))
+        assertEquals("en:colombia,es:ecuador", parsed.countriesTags)
     }
 }

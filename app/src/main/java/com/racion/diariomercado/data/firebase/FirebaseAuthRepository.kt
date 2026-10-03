@@ -4,6 +4,7 @@ import com.google.firebase.auth.EmailAuthProvider
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.android.gms.tasks.Task
 import com.racion.diariomercado.core.AppError
 import com.racion.diariomercado.core.AppResult
@@ -119,6 +120,21 @@ internal class FirebaseAuthRepository : AuthRepository {
         .distinctUntilChanged()
 
     /**
+     * The current session's uid, or `null` when there is none.
+     *
+     * A plain property, not a `Flow`, on purpose: the one caller
+     * ([com.racion.diariomercado.ui.screens.auth.ProfileViewModel]) needs to read it twice around a
+     * sign-in — before, to know which rows to re-key, and after, to know where they went — and a
+     * flow would make it a `first()` with a suspension point in the middle of an operation that must
+     * not yield.
+     *
+     * `runCatching` for the same reason `promoteToEmailAccount` guards its `currentUser`: on an
+     * uninitialised Firebase `currentUser` is unreachable, and `null` is the honest answer.
+     */
+    override val currentUid: String?
+        get() = runCatching { firebaseAuth().currentUser?.uid }.getOrNull()
+
+    /**
      * Mints the anonymous session the app starts from. See [AuthRepository.signInAnonymously] for
      * why this has to run before any Firestore call.
      *
@@ -173,6 +189,106 @@ internal class FirebaseAuthRepository : AuthRepository {
      */
     override suspend fun signIn(email: String, password: String): AppResult<Unit> = runAuthCall {
         firebaseAuth().signInWithEmailAndPassword(email, password).awaitTask()
+    }
+
+    /**
+     * Signs in with a Google ID token, keeping the anonymous `uid` when there is one.
+     *
+     * The branch below is the whole point of this method, so it is worth being explicit about what
+     * each side costs:
+     *
+     * - **Anonymous session present → [FirebaseUser.linkWithCredential].** The provider returns
+     *   the SAME `FirebaseUser`, SAME `uid`, and moves nothing. The diary a user has been keeping
+     *   since first launch stays exactly where it is.
+     * - **No session → [FirebaseAuth.signInWithCredential].** Ordinary sign-in, nothing to lose.
+     *
+     * The tempting one-liner is `signInWithCredential` unconditionally, and it is a data-loss bug
+     * under an anonymous-first strategy: signing in over an anonymous session makes Firebase
+     * delete that anonymous account server-side, taking every document written under its `uid`
+     * with it. Nothing in the app can undo that. See the warning on [AuthRepository.signOut] —
+     * this is the same destruction reached by a route nobody warned the user about.
+     *
+     * A **permanent** session falls into the sign-in branch on purpose: there is no anonymous data
+     * to preserve, and Firebase answers `ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL` if the
+     * user already holds a different credential, which maps to [AppError.Unknown] by the
+     * fall-through rather than pretending to be a case we handle.
+     *
+     * ## The anonymous branch has one way out, and it is not automatic
+     * A user who is anonymous and picks a Google account that **already exists** cannot link it —
+     * Firebase refuses with `ERROR_CREDENTIAL_ALREADY_IN_USE`. Their way in is
+     * [signInWithGoogleReplacingSession], which ends the guest session, so it is a separate call the
+     * caller must put behind a question. This method reports [AuthErrorMarkers.GOOGLE_ACCOUNT_EXISTS]
+     * and stops; it never takes that second step on its own.
+     *
+     * ## What the caller does with success
+     * A success here does NOT mean the uid moved — linking keeps it. The caller compares
+     * [currentUid] before and after and re-keys only when it changed.
+     *
+     * The `?: return` guard is a real null check for the same reason as
+     * [promoteToEmailAccount]: on an uninitialised Firebase this repository reports a value, it
+     * does not crash a screen that was only trying to render.
+     */
+    override suspend fun signInWithGoogle(idToken: String): AppResult<Unit> {
+        val currentUser = runCatching { firebaseAuth().currentUser }.getOrNull()
+        if (currentUser?.isAnonymous != true) {
+            return runAuthCall {
+                firebaseAuth()
+                    .signInWithCredential(GoogleAuthProvider.getCredential(idToken, null))
+                    .awaitTask()
+            }
+        }
+
+        // Anonymous session: LINK, never sign in. Signing in here would destroy the anonymous
+        // account, so a failure has to be reported rather than retried the other way.
+        val result = runAuthCall {
+            currentUser
+                .linkWithCredential(GoogleAuthProvider.getCredential(idToken, null))
+                .awaitTask()
+        }
+        // The link failed because the credential is already attached to another account, which is
+        // the ONE case where the user has a way in. It is reported as its own marker so the caller
+        // asks before switching sessions — see [AuthRepository.signInWithGoogleReplacingSession] for
+        // why that switch is not something to do silently. The generic marker would be read by the
+        // Presentation layer as "esa cuenta ya existe, iniciá sesión con ella", which is advice an
+        // anonymous user cannot act on from the screen they are looking at.
+        return result.translateLinkCollision()
+    }
+
+    /**
+     * [AuthRepository.signInWithGoogleReplacingSession]. The destructive one.
+     *
+     * Deliberately a bare `signInWithCredential` with no session check and no branch: the caller
+     * already asked the user, and adding a "helpful" guard here would silently turn the one call
+     * that must switch sessions into a link attempt that fails again.
+     */
+    override suspend fun signInWithGoogleReplacingSession(idToken: String): AppResult<Unit> =
+        runAuthCall {
+            firebaseAuth()
+                .signInWithCredential(GoogleAuthProvider.getCredential(idToken, null))
+                .awaitTask()
+        }
+
+    /**
+     * Rewrites the generic "credential already attached elsewhere" result into the specific
+     * "this Google account exists and you are anonymous" one.
+     *
+     * Narrow on purpose: it only fires on the anonymous LINK path, which is the only path in this
+     * class that can produce that code. The non-anonymous branch is a plain sign-in, and
+     * `signInWithCredential` with an already-registered credential SUCCEEDS there — it signs into
+     * that account — so it never arrives here and is left alone even if a future provider version
+     * reports it.
+     */
+    private fun AppResult<Unit>.translateLinkCollision(): AppResult<Unit> {
+        val error = (this as? AppResult.Failure)?.error
+        return if (error is AppError.Server &&
+            error.message == AuthErrorMarkers.CREDENTIAL_ALREADY_IN_USE
+        ) {
+            AppResult.Failure(
+                AppError.Server(code = null, message = AuthErrorMarkers.GOOGLE_ACCOUNT_EXISTS)
+            )
+        } else {
+            this
+        }
     }
 
     /**
@@ -293,8 +409,23 @@ internal class FirebaseAuthRepository : AuthRepository {
         // below on purpose: `OPERATION_NOT_ALLOWED` is what Firebase answers when the *Email/Password*
         // provider is disabled, and mapping it as a generic Server error would tell the user to
         // "try again" about something that cannot succeed on a retry.
-        errorCode == ERROR_ANONYMOUS_LOGIN_DISABLED || errorCode == ERROR_OPERATION_NOT_ALLOWED ->
+        //
+        // `ERROR_PROVIDER_NOT_ENABLED` is the same situation for a *named* provider, which is what
+        // Firebase answers for Google. It is the single most likely first failure of the Google
+        // button: enabling a sign-in method is a manual web-console step and a fresh project ships
+        // with every provider off.
+        errorCode == ERROR_ANONYMOUS_LOGIN_DISABLED ||
+            errorCode == ERROR_OPERATION_NOT_ALLOWED ||
+            errorCode == ERROR_PROVIDER_NOT_ENABLED ->
             AppError.Server(code = null, message = AuthErrorMarkers.PROVIDER_DISABLED)
+
+        // A Google ID token that expired or is malformed. Deliberately the GENERIC Server branch
+        // rather than a dedicated marker: "No pudimos completar la operación. Intentá de nuevo"
+        // is exactly the right instruction, because the retry fetches a FRESH token — whereas
+        // reusing the rejected one would fail identically forever. The exception stays on the
+        // Unknown-free Server value only as a log; nothing can act on it here.
+        errorCode == ERROR_TOKEN_EXPIRED || errorCode == ERROR_INVALID_ID_TOKEN ->
+            AppError.Server(code = null, message = null)
 
         // Both should have been caught by ViewModel validation first, so reaching them is a gap
         // rather than a user error — hence Unknown, which keeps the exception for the log.
@@ -350,6 +481,9 @@ private const val ERROR_NETWORK_REQUEST_FAILED = "ERROR_NETWORK_REQUEST_FAILED"
 private const val ERROR_TOO_MANY_REQUESTS = "ERROR_TOO_MANY_REQUESTS"
 private const val ERROR_ANONYMOUS_LOGIN_DISABLED = "ANONYMOUS_LOGIN_DISABLED"
 private const val ERROR_OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
+private const val ERROR_PROVIDER_NOT_ENABLED = "ERROR_PROVIDER_NOT_ENABLED"
+private const val ERROR_TOKEN_EXPIRED = "ERROR_TOKEN_EXPIRED"
+private const val ERROR_INVALID_ID_TOKEN = "ERROR_INVALID_ID_TOKEN"
 private const val ERROR_INVALID_EMAIL = "ERROR_INVALID_EMAIL"
 private const val ERROR_WEAK_PASSWORD = "ERROR_WEAK_PASSWORD"
 private const val ERROR_USER_NOT_FOUND = "ERROR_USER_NOT_FOUND"

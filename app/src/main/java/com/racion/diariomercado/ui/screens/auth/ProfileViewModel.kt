@@ -7,6 +7,7 @@ import com.racion.diariomercado.core.AppResult
 import com.racion.diariomercado.domain.repository.AuthErrorMarkers
 import com.racion.diariomercado.domain.repository.AuthRepository
 import com.racion.diariomercado.domain.repository.AuthState
+import com.racion.diariomercado.domain.repository.SessionDataReassigner
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,6 +61,37 @@ data class ProfileUiState(
     /** The email this device last claimed the account with, or `null`. See the KDoc above. */
     val claimedEmail: String? = null,
     val isLoading: Boolean = false,
+    /**
+     * The Google path's own busy flag, and it is NOT the same as [isLoading].
+     *
+     * [isLoading] means "a request is in flight". This one is true from the tap that opens the
+     * account sheet until the Firebase exchange settles — including the stretch where the user is
+     * reading an account list and nothing is happening. Merging them would either disable the email
+     * form while someone is choosing an account, or leave the Google button tappable under the
+     * sheet.
+     */
+    val isGoogleInProgress: Boolean = false,
+    /**
+     * Whether to ask before switching an anonymous session into an existing Google account.
+     *
+     * Not an error. It is the one case where the user has a way in and the app has to ask which way
+     * they want it: the picked Google account already exists, so the only route is signing into it,
+     * and signing in **ends the guest session** — irreversibly, server-side. See
+     * [AuthRepository.signInWithGoogleReplacingSession].
+     *
+     * A separate flag from [errorMessage] on purpose. Anything routed to the error path invites a
+     * retry, and retrying the same Google tap produces the same code forever.
+     */
+    val showGoogleMergeConfirmation: Boolean = false,
+    /**
+     * Whether the form is asking for an account the user **already has**.
+     *
+     * A different call, not a different validation: [onClaimSubmit] promotes (keeps the uid, free)
+     * and [ProfileViewModel.onClaimIntoExistingAccount] signs in (changes the uid, then re-keys two
+     * rows). The user has to be able to say which one they mean, because Firebase will not discover
+     * it for them — it answers "that address is taken" only after the fact.
+     */
+    val isClaimingExistingAccount: Boolean = false,
     val errorMessage: String? = null,
     /**
      * Whether the destructive sign-out dialog is open.
@@ -95,8 +127,18 @@ data class ProfileUiState(
  * exact habit that makes the anonymous warning useless.
  */
 class ProfileViewModel(
-    private val authRepository: AuthRepository
+    private val authRepository: AuthRepository,
+    private val sessionDataReassigner: SessionDataReassigner
 ) : ViewModel() {
+
+    /**
+     * The Google credential held while the merge question is on screen.
+     *
+     * Not in [ProfileUiState]: it is a credential, and putting one in a state object that previews,
+     * logs and screenshots can reach is how it ends up somewhere it should not be. It lives here
+     * for exactly as long as the dialog does, and is nulled on both answers.
+     */
+    private var pendingGoogleIdToken: String? = null
 
     private val _uiState = MutableStateFlow(ProfileUiState())
     val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
@@ -186,8 +228,228 @@ class ProfileViewModel(
         _uiState.update { it.copy(isClaimFormVisible = true, errorMessage = null) }
     }
 
+    /**
+     * Hides the form and resets which of the two paths was in flight.
+     *
+     * `isGoogleInProgress` is cleared too, not just `isLoading`: a user can dismiss the sheet while
+     * the Google exchange is still running, and leaving the flag true would make every later Google
+     * tap a silent no-op for the rest of the screen's life.
+     */
     fun onDismissClaimForm() {
-        _uiState.update { it.copy(isClaimFormVisible = false, errorMessage = null) }
+        _uiState.update {
+            it.copy(
+                isClaimFormVisible = false,
+                isGoogleInProgress = false,
+                isClaimingExistingAccount = false,
+                errorMessage = null
+            )
+        }
+    }
+
+    /**
+     * Switches the form between "create an account" and "I already have one".
+     *
+     * Clearing the error is the point: the message the user just read belongs to the OTHER path. A
+     * Google failure still showing "esa dirección ya está registrada" while the user now types a new
+     * address is the kind of stale state that makes people submit the same wrong thing twice.
+     */
+    fun onSwitchClaimPath(toExistingAccount: Boolean) {
+        if (_uiState.value.isLoading || _uiState.value.isGoogleInProgress) return
+        _uiState.update {
+            it.copy(isClaimingExistingAccount = toExistingAccount, errorMessage = null)
+        }
+    }
+
+    /**
+     * Starts the Google claim from a tap on the button.
+     *
+     * The flag goes up HERE, before the launcher is asked for anything, and not in the result
+     * callback. `GoogleSignInButton` disables itself while `isGoogleInProgress` is set, and if the
+     * flag waited for the callback the button would still be tappable during the entire account
+     * sheet — which is precisely when a second tap does nothing visible and looks like a broken
+     * button.
+     *
+     * ## Nothing is touched here
+     * No session check, no validation, no repository call. Whether this device even has Google
+     * Play Services is not knowable from the app, so the honest answer is to try and let the
+     * launcher fail — see [onGoogleSignInProviderUnavailable]. Guarding it with an assumption here
+     * would mean guessing, and a guessed "no" hides the button on perfectly good devices.
+     */
+    fun onGoogleSignInRequested() {
+        if (_uiState.value.isGoogleInProgress) return
+        _uiState.update { it.copy(isGoogleInProgress = true, errorMessage = null) }
+    }
+
+    /**
+     * Exchanges a Google ID token for a session. Wired from `GoogleSignInOutcome.Success`.
+     *
+     * ## The uid is read BEFORE the call, because it might move
+     * [AuthRepository.signInWithGoogle] links when the session is anonymous and signs in otherwise.
+     * Linking returns the SAME uid; signing into an existing account returns a different one. Both
+     * report `Success`, so the return value alone cannot tell them apart — comparing [currentUid]
+     * around the call can, and only if the "before" read happens first. Read afterwards and you get
+     * `x -> x`, zero rows moved, and a user's calorie target that silently reverts weeks later.
+     */
+    fun onGoogleSignIn(idToken: String) {
+        if (_uiState.value.isLoading) return
+        // Captured unconditionally, even on the paths that end in failure: it costs nothing and
+        // being wrong here means not re-keying, which is recoverable. Being wrong the other way
+        // means moving rows that were never ours.
+        val anonymousUid = authRepository.currentUid
+        viewModelScope.launch {
+            when (val result = authRepository.signInWithGoogle(idToken)) {
+                is AppResult.Success -> {
+                    val accountUid = authRepository.currentUid
+                    rekeyIfSessionMoved(anonymousUid, accountUid)
+                    _uiState.update {
+                        it.copy(
+                            isGoogleInProgress = false,
+                            isClaimFormVisible = false,
+                            isClaimingExistingAccount = false,
+                            showGoogleMergeConfirmation = false,
+                            errorMessage = null
+                        )
+                    }
+                }
+
+                // The account exists and the user is anonymous. Ask, do not report: the next step
+                // destroys the guest session, and the token has to be held so confirming does not
+                // make them pick the account a second time.
+                is AppResult.Failure ->
+                    if (result.error.isGoogleAccountExists()) {
+                        pendingGoogleIdToken = idToken
+                        _uiState.update {
+                            it.copy(
+                                isGoogleInProgress = false,
+                                showGoogleMergeConfirmation = true,
+                                errorMessage = null
+                            )
+                        }
+                    } else {
+                        // The form stays open: a Google failure is often something the user can fix
+                        // without leaving this screen, and retyping an email would be worse.
+                        _uiState.update {
+                            it.copy(isGoogleInProgress = false, errorMessage = result.error.toUserMessage())
+                        }
+                    }
+            }
+        }
+    }
+
+    /**
+     * The user said yes: end the guest session and move the local rows to the account they chose.
+     *
+     * The uid is read again here, not reused from [onGoogleSignIn]. Between the two calls the
+     * dialog was open and something else could have changed the session; and the "before" value
+     * this needs is the one from immediately before the switch, which is the only reading that
+     * guarantees it is a different uid from the "after" one.
+     */
+    fun onGoogleMergeConfirmed() {
+        val idToken = pendingGoogleIdToken ?: return
+        val anonymousUid = authRepository.currentUid
+        viewModelScope.launch {
+            when (val result = authRepository.signInWithGoogleReplacingSession(idToken)) {
+                is AppResult.Success -> {
+                    val accountUid = authRepository.currentUid
+                    rekeyIfSessionMoved(anonymousUid, accountUid)
+                    pendingGoogleIdToken = null
+                    _uiState.update {
+                        it.copy(
+                            isGoogleInProgress = false,
+                            isClaimFormVisible = false,
+                            isClaimingExistingAccount = false,
+                            showGoogleMergeConfirmation = false,
+                            errorMessage = null
+                        )
+                    }
+                }
+
+                // The switch failed, so the uid never moved and there is nothing to re-key. The
+                // dialog has to close and the user has to be told: a dialog that just vanishes
+                // looks like the app ignored them.
+                is AppResult.Failure -> {
+                    pendingGoogleIdToken = null
+                    _uiState.update {
+                        it.copy(
+                            isGoogleInProgress = false,
+                            showGoogleMergeConfirmation = false,
+                            errorMessage = result.error.toUserMessage()
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * The user said no. Nothing has happened yet, so nothing has to be undone.
+     *
+     * The token is dropped on purpose. Keeping it would leave a credential reachable from a screen
+     * the user has declined, and the only way to use it is the very call they just refused.
+     */
+    fun onGoogleMergeDismissed() {
+        pendingGoogleIdToken = null
+        _uiState.update { it.copy(showGoogleMergeConfirmation = false, errorMessage = null) }
+    }
+
+    /**
+     * Moves the per-user rows when — and only when — the uid actually changed.
+     *
+     * Three ways this correctly does nothing, and all three are ordinary:
+     * - linking kept the uid, so there is nothing to move (the common case, and the one that must
+     *   NOT write, because a pointless re-key of `x -> x` would delete the target row first);
+     * - there was no session, so there is no "before" to move from;
+     * - the provider reported a uid that matches, which is the same as the first case.
+     *
+     * Swallowing the re-key's own failure is deliberate and asymmetric: the account IS claimed at
+     * this point, and the diary — the thing users actually notice losing — is untouched because it
+     * has no `userId` at all. Blocking the screen on a failed profile-row move would show an error
+     * over a state the user considers a success, and would suggest their account is not signed in
+     * when it is. The cost of getting this wrong is two defaulted rows, recoverable by re-entering
+     * them; the cost of the alternative is telling someone their sign-in failed when it did not.
+     */
+    private suspend fun rekeyIfSessionMoved(anonymousUid: String?, accountUid: String?) {
+        if (anonymousUid == null || accountUid == null || anonymousUid == accountUid) return
+        sessionDataReassigner.reassign(anonymousUid, accountUid)
+    }
+
+    private fun AppError.isGoogleAccountExists(): Boolean =
+        this is AppError.Server && message == AuthErrorMarkers.GOOGLE_ACCOUNT_EXISTS
+
+    /**
+     * The user closed the account sheet without picking anything.
+     *
+     * An ABORT is not a failure and must not render as one. `GoogleSignInOutcome.Aborted` arrives
+     * when the user taps back or swipes the sheet away, which is a decision, not a problem — showing
+     * an error there is how "I changed my mind" turns into "this app is broken".
+     *
+     * The claim form stays open: they were halfway through claiming, and dismissing it because they
+     * changed their mind about which Google account to use would throw away the email they had
+     * typed. `ProfileViewModelTest.cancellingTheGoogleSheetIsNotAbandoningTheClaim` pins this.
+     */
+    fun onGoogleSignInCancelled() {
+        _uiState.update { it.copy(isGoogleInProgress = false) }
+    }
+
+    /**
+     * The device cannot run the Google flow at all.
+     *
+     * This is the branch that has to point somewhere useful. On an emulator without Play Services,
+     * or on a device where Google Sign-In was never configured, a Google button is simply a dead
+     * control. The answer is the email form — which always works, because it needs no provider
+     * beyond the one already in use.
+     *
+     * The repository is deliberately NOT called. There is no token to exchange and nothing to learn
+     * from a round trip that cannot succeed.
+     */
+    fun onGoogleSignInProviderUnavailable() {
+        _uiState.update {
+            it.copy(
+                isGoogleInProgress = false,
+                isClaimingExistingAccount = true,
+                errorMessage = "No pudimos abrir Google en este dispositivo. Usá tu correo y contraseña."
+            )
+        }
     }
 
     /**
@@ -204,19 +466,96 @@ class ProfileViewModel(
      * [authState] moves to [AuthState.Authenticated] on its own. Setting it here as well would be a
      * second source of truth for a fact the repository already owns, and the two would disagree the
      * first time a link failed after the server had already accepted it.
+     *
+     * ## Why nothing is re-keyed here
+     * `linkWithCredential` returns the SAME `FirebaseUser` with the SAME uid, so there is nothing to
+     * move. That is the entire reason this path is free, and it is why calling
+     * [sessionDataReassigner] from here would be a pointless write that would look correct in every
+     * test. The user has not lost anything by creating an account, so this is the good version of
+     * claiming.
      */
     fun onClaimSubmit() {
-        val state = _uiState.value
+        claim(
+            // Guarded on the session, not just on the form. The repository tolerates a missing
+            // session (it returns a Failure rather than throwing), but calling it here would spend a
+            // round trip to be told something this screen already knows.
+            call = { email, password -> authRepository.promoteToEmailAccount(email, password) },
+            claimedEmail = _uiState.value.email
+        )
+    }
 
-        // Guarded on the session, not just on the form. The repository tolerates a missing session
-        // (it returns a Failure rather than throwing), but calling it here would spend a round trip
-        // to be told something this screen already knows.
+    /**
+     * Claims the account into one that **already exists**.
+     *
+     * This is the path Firebase will not do for us. `linkWithCredential` only attaches a credential
+     * that belongs to no other account, so promoting an address that is already registered always
+     * fails with `ERROR_EMAIL_ALREADY_IN_USE`. There is no "turn account A into B" in Firebase Auth.
+     * The alternative is [AuthRepository.signIn], which mints the existing account's uid and
+     * therefore **changes** the uid — and that is the one case where the local rows have to follow.
+     *
+     * ## The ordering is the whole implementation
+     * The old uid is read BEFORE the sign-in, because a successful sign-in replaces it and the old
+     * value is gone. Reading it afterwards yields `x -> x`, the re-assigner moves zero rows, and the
+     * user's calorie target silently reverts to its default days later with nothing to explain it.
+     * `ProfileViewModelTest.theAnonymousUidIsReadBeforeSignInAndTheAccountUidAfterIt` pins this.
+     *
+     * The diary needs none of this: `diary_entries`, `sync_outbox` and `food_products` have no
+     * `userId` column. Only `user_profiles` and `nutrition_goals` move.
+     */
+    fun onClaimIntoExistingAccount() {
+        claim(
+            call = { email, password ->
+                // Read first, unconditionally: even if the sign-in fails, this is the right value
+                // to have captured, and reading it after would be the bug.
+                val anonymousUid = authRepository.currentUid
+                when (val result = authRepository.signIn(email, password)) {
+                    is AppResult.Failure -> result
+                    is AppResult.Success -> {
+                        val accountUid = authRepository.currentUid
+                        if (anonymousUid != null && accountUid != null && anonymousUid != accountUid) {
+                            sessionDataReassigner.reassign(anonymousUid, accountUid)
+                        } else {
+                            // Nothing to move: either there was no anonymous session (guarded
+                            // below), or the uid did not actually move. Reporting success is right
+                            // — the account IS claimed, there was simply nothing local to re-key.
+                            AppResult.Success(Unit)
+                        }
+                    }
+                }
+            },
+            claimedEmail = _uiState.value.email
+        )
+    }
+
+    /**
+     * Shared body for the two email paths: session guard, validation, the double-tap guard, and the
+     * success/failure bookkeeping.
+     *
+     * They differ only in which repository command they run and in whether the uid moves, so
+     * duplicating the guards would guarantee the two drift apart — and the guards are exactly where
+     * the dangerous behaviour lives (a second promotion of the same address is the fastest route to
+     * Firebase's rate limiter).
+     */
+    private fun claim(
+        call: suspend (email: String, password: String) -> AppResult<Unit>,
+        claimedEmail: String
+    ) {
+        val state = _uiState.value
+        // Captured up front, before any update: the error mapper needs the path the user chose, and
+        // the failure branch below has already cleared the form flags by the time it runs.
+        val claimingExistingAccount = state.isClaimingExistingAccount
+
         if (state.authState !is AuthState.Anonymous) {
             _uiState.update {
                 it.copy(errorMessage = "Primero necesitás una sesión de invitado.", isLoading = false)
             }
             return
         }
+
+        // The double-tap guard. Two claims of the same address in flight at once is the fastest way
+        // to get rate-limited, and the resulting message ("demasiados intentos") has nothing to do
+        // with anything the user did.
+        if (state.isLoading || state.isGoogleInProgress) return
 
         validateEmail(state.email)?.let { message ->
             _uiState.update { it.copy(errorMessage = message, isLoading = false) }
@@ -229,19 +568,24 @@ class ProfileViewModel(
 
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         viewModelScope.launch {
-            when (val result = authRepository.promoteToEmailAccount(state.email, state.password)) {
+            when (val result = call(state.email, state.password)) {
                 is AppResult.Success -> _uiState.update {
                     it.copy(
                         isLoading = false,
                         isClaimFormVisible = false,
-                        claimedEmail = state.email,
+                        isClaimingExistingAccount = false,
+                        claimedEmail = claimedEmail,
                         errorMessage = null
                     )
                 }
                 // isLoading is cleared on this branch too: leaving it true would pin the form behind
-                // a spinner with no way to retry.
+                // a spinner with no way to retry. The form also stays OPEN, because a user who just
+                // mistyped their password should not have to start over from the beginning.
                 is AppResult.Failure -> _uiState.update {
-                    it.copy(isLoading = false, errorMessage = result.error.toUserMessage())
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = result.error.toClaimUserMessage(claimingExistingAccount)
+                    )
                 }
             }
         }
@@ -352,6 +696,54 @@ class ProfileViewModel(
         this is AppError.Server -> "No pudimos completar la operación. Intentá de nuevo."
         this is AppError.Network -> "Sin conexión. Revisá tu internet e intentá de nuevo."
         this is AppError.NotFound -> "No encontramos esos datos."
+        this is AppError.RateLimited -> "Demasiados intentos. Esperá un momento."
+        this is AppError.Unknown -> "Ocurrió un error inesperado. Intentá de nuevo."
+        else -> "Ocurrió un error inesperado. Intentá de nuevo."
+    }
+
+    /**
+     * The user-facing text for a CLAIM failure.
+     *
+     * Separate from [toUserMessage] because one sentence has to change meaning, and reusing the
+     * general mapper would make it wrong on one of the two paths.
+     *
+     * ## The one case that depends on which path the user chose
+     * `ERROR_EMAIL_ALREADY_IN_USE` means two completely different things depending on intent:
+     *
+     * - Promoting a **new** address that turns out to be taken: the user has an account and did not
+     *   know it. There is a real action available on this very screen, so the copy has to point at
+     *   it. Telling them to "sign in" — the old wording, inherited from a flow that had nowhere to
+     *   send them — would send a user off this screen to accomplish something two taps away.
+     * - Signing into an "existing" address that turns out NOT to exist: the user mistyped, or is on
+     *   the wrong account. Saying "that address is taken" would be exactly backwards, so this branch
+     *   gets its own copy.
+     *
+     * The marker is the same; only the user's declared intent separates them. That intent lives in
+     * [ProfileUiState.isClaimingExistingAccount] and is passed in rather than read from
+     * `_uiState` inside the mapper, so the sentence cannot depend on state that a concurrent update
+     * may have already changed.
+     */
+    private fun AppError.toClaimUserMessage(claimingExistingAccount: Boolean): String = when {
+        this is AppError.Server && message == AuthErrorMarkers.CREDENTIAL_ALREADY_IN_USE &&
+            !claimingExistingAccount ->
+            "Ese correo ya tiene una cuenta. ¿Ya te registraste antes? Cambiá a \"Ya tengo cuenta\"."
+
+        // Reaching here means the address was NOT registered, which is the opposite of the marker.
+        // Firebase reports one code for both, and this is the branch where guessing wrong actively
+        // misleads: the user would go looking for an account they do not have.
+        this is AppError.Server && message == AuthErrorMarkers.CREDENTIAL_ALREADY_IN_USE ->
+            "No encontramos una cuenta con ese correo. Revisá el correo o creá una cuenta nueva."
+
+        this is AppError.Server && message == AuthErrorMarkers.WRONG_CREDENTIALS ->
+            "El correo o la contraseña no coinciden. Tu diario sigue guardado en este dispositivo."
+
+        this is AppError.Server && message == AuthErrorMarkers.PROVIDER_DISABLED ->
+            "La autenticación no está habilitada en el proyecto de Firebase. " +
+                "Alguien tiene que activar los métodos de acceso en Authentication → Sign-in method."
+
+        this is AppError.Server -> "No pudimos completar la operación. Tu diario sigue guardado."
+        this is AppError.Network -> "Sin conexión. Revisá tu internet e intentá de nuevo."
+        this is AppError.NotFound -> "No encontramos esos datos. Tu diario sigue guardado."
         this is AppError.RateLimited -> "Demasiados intentos. Esperá un momento."
         this is AppError.Unknown -> "Ocurrió un error inesperado. Intentá de nuevo."
         else -> "Ocurrió un error inesperado. Intentá de nuevo."

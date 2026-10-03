@@ -6,9 +6,11 @@ import com.racion.diariomercado.BuildConfig
 import com.racion.diariomercado.data.firebase.FirebaseAuthRepository
 import com.racion.diariomercado.data.local.LocalDiaryRepository
 import com.racion.diariomercado.data.local.RacionDatabase
+import com.racion.diariomercado.data.local.RoomSessionDataReassigner
 import com.racion.diariomercado.data.openfood.OpenFoodFactsService
 import com.racion.diariomercado.domain.repository.AuthRepository
 import com.racion.diariomercado.domain.repository.DiaryRepository
+import com.racion.diariomercado.domain.repository.SessionDataReassigner
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.OkHttpClient
@@ -202,6 +204,25 @@ class AppContainer(private val context: Context) {
             database = rationDatabase,
             userId = LocalDiaryRepository.LOCAL_USER_ID
         )
+    }
+
+    /**
+     * Moves this device's per-user rows when someone claims an anonymous account into one that
+     * already existed — the only claim path where the uid actually moves.
+     *
+     * ## Why the database, not the two DAOs
+     * The move spans `user_profiles` and `nutrition_goals`, and a Room `@Transaction` can only
+     * decorate a method on a single DAO. `RoomSessionDataReassigner` therefore takes the database
+     * and opens one `withTransaction` across both — see its KDoc for why a half-finished state here
+     * would be invisible to the user.
+     *
+     * Taking `rationDatabase` rather than re-deriving the builder is deliberate and not an
+     * optimisation: two `Room.databaseBuilder` calls for the same file name hand out two separate
+     * connection pools, and a transaction on one would not cover the other. It is also why
+     * `rationDatabase` is `private` — this accessor is the only way out.
+     */
+    val sessionDataReassigner: SessionDataReassigner by lazy {
+        RoomSessionDataReassigner(rationDatabase)
     }
 
     // TODO(OFF-4): expose the remaining repository interfaces once their implementations exist:

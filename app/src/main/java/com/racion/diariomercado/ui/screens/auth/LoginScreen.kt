@@ -11,8 +11,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -27,6 +28,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.racion.diariomercado.ui.components.AuthHeroBlock
+import com.racion.diariomercado.ui.components.LabeledDivider
+import com.racion.diariomercado.ui.components.PrimaryButton
 import com.racion.diariomercado.ui.theme.NutriAppTheme
 import kotlinx.coroutines.delay
 
@@ -35,9 +39,19 @@ import kotlinx.coroutines.delay
  * lambdas, so the same composable is used by the navigation graph, by `@Preview`, and by any
  * future screenshot test without a ViewModel in reach.
  *
+ * The Google button follows the same rule: [onGoogleSignIn] is a plain callback and the account
+ * picker is launched by whoever holds the trigger (see
+ * [rememberGoogleSignInLauncher]), so this file imports nothing from `androidx.credentials`.
+ *
  * Note there is no Scaffold here and no `AppBottomBar`. Every other screen in the app renders its
  * own, but the auth screens are a modal flow outside the tabbed shell — showing the bottom bar
  * here would let the user tab away into a destination that assumes a session.
+ *
+ * ## Why the screen is built out of shared components
+ * It used to declare its own `Button`, its own spacing and its own colour picks, which made it the
+ * only screen in the app that ignored `AppComponents` — and it is the first thing a new user sees.
+ * Every colour, radius and height here now comes from `MaterialTheme` or from a component in
+ * `ui/components`, so a change to the theme reaches the login screen like it reaches the rest.
  */
 @Composable
 fun LoginScreen(
@@ -45,7 +59,10 @@ fun LoginScreen(
     onEmailChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onSignIn: () -> Unit,
+    onGoogleSignIn: () -> Unit,
     onSignUpClick: () -> Unit,
+    onGoogleMergeConfirmed: () -> Unit,
+    onGoogleMergeDismissed: () -> Unit,
     onErrorShown: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -59,6 +76,12 @@ fun LoginScreen(
         }
     }
 
+    // One switch for "you cannot start a second sign-in right now". The two flows are separate
+    // flags on purpose — [LoginUiState.isLoading] is a network call and [LoginUiState.isGoogleInProgress]
+    // includes the stretch where the account sheet is on screen — but from here they disable the
+    // same things, and a user cannot tell the difference, so neither should the form.
+    val isBusy = state.isLoading || state.isGoogleInProgress
+
     Scaffold(modifier = modifier) { padding ->
         Column(
             modifier = Modifier
@@ -69,25 +92,33 @@ fun LoginScreen(
                 .padding(horizontal = 24.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.Center
         ) {
-            Text(
-                text = "Iniciar sesión",
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.onSurface
+            AuthHeroBlock(
+                title = "Tu ración, todos los días",
+                subtitle = "Escaneá lo que comés y el mercado te cuenta lo que pasa con tus macros."
             )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "Ingresá a tu cuenta para ver tu diario",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+
+            Spacer(Modifier.height(24.dp))
+
+            // Google first: it is the path with no form, and putting it above the fold is what
+            // keeps the email fields from reading as the only way in.
+            GoogleSignInButton(
+                onClick = onGoogleSignIn,
+                enabled = !isBusy,
+                isLoading = state.isGoogleInProgress
             )
-            Spacer(Modifier.height(32.dp))
+
+            Spacer(Modifier.height(24.dp))
+
+            LabeledDivider(text = "o continuá con tu correo")
+
+            Spacer(Modifier.height(24.dp))
 
             OutlinedTextField(
                 value = state.email,
                 onValueChange = onEmailChange,
                 label = { Text("Correo electrónico") },
                 singleLine = true,
-                enabled = !state.isLoading,
+                enabled = !isBusy,
                 isError = state.errorMessage != null,
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Email,
@@ -102,7 +133,7 @@ fun LoginScreen(
                 onValueChange = onPasswordChange,
                 label = { Text("Contraseña") },
                 singleLine = true,
-                enabled = !state.isLoading,
+                enabled = !isBusy,
                 isError = state.errorMessage != null,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(
@@ -123,37 +154,74 @@ fun LoginScreen(
 
             Spacer(Modifier.height(28.dp))
 
-            Button(
+            PrimaryButton(
+                text = "Iniciar sesión",
                 onClick = onSignIn,
-                // Disabled while loading AND the spinner: without the disable, a double tap fires
-                // two sign-in calls, which is exactly how an account gets rate-limited.
-                enabled = !state.isLoading,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-            ) {
-                if (state.isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.height(24.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                } else {
-                    Text("Iniciar sesión", style = MaterialTheme.typography.titleLarge)
-                }
-            }
+                enabled = !isBusy,
+                isLoading = state.isLoading
+            )
 
             Spacer(Modifier.height(12.dp))
 
             TextButton(
                 onClick = onSignUpClick,
-                enabled = !state.isLoading,
+                enabled = !isBusy,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             ) {
                 Text("¿No tenés cuenta? Crear cuenta")
             }
         }
     }
+
+    if (state.showGoogleMergeConfirmation) {
+        GoogleMergeConfirmationDialog(
+            onConfirm = onGoogleMergeConfirmed,
+            onDismiss = onGoogleMergeDismissed
+        )
+    }
+}
+
+/**
+ * Same merge question as in [ProfileScreen.GoogleMergeConfirmationDialog], replicated here because
+ * an anonymous user can also reach the LOGIN screen and hit the same case.
+ *
+ * The message is identical on purpose: the situation is identical, and a user who sees it in both
+ * places should not have to parse two different wordings for the same decision.
+ */
+@Composable
+private fun GoogleMergeConfirmationDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Esta cuenta de Google ya existe") },
+        text = {
+            Text(
+                "Elegiste una cuenta de Google que ya tenés registrada. Para entrar a ella, " +
+                    "tu sesión de invitado tiene que cerrarse. Lo que guardaste en este dispositivo " +
+                    "—tu nombre, tu foco de deporte y tus metas de calorías— se mueve a esa cuenta. " +
+                    "Tu diario no se toca: vive en tablas sin userId y sobrevive a cualquier cambio " +
+                    "de sesión."
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            ) {
+                Text("Entrar a esa cuenta")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Seguir como invitado")
+            }
+        }
+    )
 }
 
 /** How long an error stays on screen before it clears itself. */
@@ -168,7 +236,10 @@ private fun LoginScreenPreview() {
             onEmailChange = {},
             onPasswordChange = {},
             onSignIn = {},
+            onGoogleSignIn = {},
             onSignUpClick = {},
+            onGoogleMergeConfirmed = {},
+            onGoogleMergeDismissed = {},
             onErrorShown = {}
         )
     }
@@ -187,7 +258,28 @@ private fun LoginScreenErrorPreview() {
             onEmailChange = {},
             onPasswordChange = {},
             onSignIn = {},
+            onGoogleSignIn = {},
             onSignUpClick = {},
+            onGoogleMergeConfirmed = {},
+            onGoogleMergeDismissed = {},
+            onErrorShown = {}
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "Login · Google en curso")
+@Composable
+private fun LoginScreenGooglePreview() {
+    NutriAppTheme {
+        LoginScreen(
+            state = LoginUiState(isGoogleInProgress = true),
+            onEmailChange = {},
+            onPasswordChange = {},
+            onSignIn = {},
+            onGoogleSignIn = {},
+            onSignUpClick = {},
+            onGoogleMergeConfirmed = {},
+            onGoogleMergeDismissed = {},
             onErrorShown = {}
         )
     }

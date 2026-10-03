@@ -157,6 +157,7 @@ dependencies {
     implementation(libs.squareup.moshi)
     // Reflection-based Kotlin adapters: what actually deserializes the OFF DTOs today.
     implementation(libs.squareup.moshi.kotlin)
+    ksp(libs.squareup.moshi.kotlin.codegen)
     implementation(libs.squareup.okhttp.logging.interceptor)
     implementation(libs.kotlinx.coroutines.android)
 

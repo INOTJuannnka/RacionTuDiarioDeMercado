@@ -16,16 +16,10 @@ import com.squareup.moshi.JsonClass
  * have no brand, no serving size, or no nutriments at all. Forcing non-null defaults here
  * would invent data.
  *
- * TODO(OFF-1): `@JsonClass(generateAdapter = true)` asks for a *generated* adapter, and no
- * annotation processor runs in this module yet, so no `*JsonAdapter` class is produced. That is
- * **not** currently a crash, and the annotation is deliberately being kept: in Moshi 1.15.2
- * the generated-adapter branch lives in a built-in `JsonAdapter.Factory`, and the
- * `KotlinJsonAdapterFactory` registered in `AppContainer` is consulted first, so these DTOs are
- * deserialized reflectively and the missing class is never looked up. The annotation is
- * therefore inert but harmless, and leaving it in place is what makes the eventual KSP
- * migration a build-config change instead of a source change. Applying KSP +
- * `libs.squareup.moshi.kotlin.codegen` makes it live; `KotlinJsonAdapterFactory` can then be
- * dropped. `MoshiAdapterTest` guards both states. See `docs/ROADMAP.md`.
+ * `@JsonClass(generateAdapter = true)` now produces codegen adapters via KSP
+ * (`libs.squareup.moshi.kotlin.codegen`), so Moshi uses generated classes at runtime.
+ * The `KotlinJsonAdapterFactory` registered in `AppContainer` remains as a fallback
+ * for any non-annotated type.
  */
 
 /**
@@ -70,6 +64,7 @@ data class OffProductDto(
     @Json(name = "ingredients_text") val ingredientsText: String?,
     @Json(name = "nutrition_grades") val nutritionGrades: String?,
     @Json(name = "image_front_url") val imageFrontUrl: String?,
+    @Json(name = "countries_tags") val countriesTags: String?,
     @Json(name = "nutriments") val nutriments: OffNutrimentsDto?
 )
 

@@ -58,7 +58,8 @@ sealed interface AuthState {
      * Obtained either by [AuthRepository.promoteToEmailAccount] — which keeps the same `uid` — or
      * by [AuthRepository.signIn] to an account that already existed. Signing out destroys nothing.
      *
-     * The uid lives in the repository, not here — no screen needs it yet.
+     * The uid itself lives in the repository; the only thing that reads it today is the anonymous
+     * claim flow, via [currentUid], and it does so to re-key local rows rather than to render it.
      */
     data object Authenticated : AuthState
 }
@@ -99,6 +100,9 @@ sealed interface AuthState {
  *   case, see [promoteToEmailAccount].
  * - `ERROR_CREDENTIAL_ALREADY_IN_USE` — the credential is attached to a different account than the
  *   current one (linking, not signing in).
+ * - `ERROR_INVALID_ID_TOKEN`, `ERROR_TOKEN_EXPIRED` — a Google token that is malformed or stale.
+ *   Specific to [signInWithGoogle], and retryable by fetching a fresh token rather than by
+ *   retrying the same one.
  * - `ERROR_INVALID_EMAIL`, `ERROR_WEAK_PASSWORD` — client-side validation gaps; the ViewModel
  *   should have caught these first, so reaching them is a bug worth logging.
  * - `ERROR_TOO_MANY_REQUESTS` — rate limited, retryable after a backoff.
@@ -122,6 +126,55 @@ interface AuthRepository {
      * It must distinguish [AuthState.Anonymous] from [AuthState.Authenticated]; see [AuthState].
      */
     val authState: Flow<AuthState>
+
+    /**
+     * The current session's `uid`, or `null` when there is no session.
+     *
+     * ## Why this is here, when [AuthState] deliberately keeps the uid private
+     * It used to be private with the note "no screen needs it yet". One does now: reclaiming an
+     * anonymous account into one that **already exists** cannot be a link — Firebase refuses to link
+     * a credential that belongs to another account — so the flow signs in, the uid changes, and the
+     * rows keyed by the OLD uid have to be re-keyed. Capturing the old uid therefore has to happen
+     * BEFORE the sign-in, because afterwards it is gone.
+     *
+     * `ProfileViewModel` is that caller. `SessionDataReassignerTest` and `ProfileViewModelTest` pin
+     * the ordering, because reading it late yields `x -> x`, moves zero rows, and loses the user's
+     * settings with no visible error anywhere.
+     *
+     * ## It is a snapshot, not a stream
+     * Read it twice, not once, when you need before-and-after: it changes under you on a successful
+     * sign-in. It is also not a second source of truth for "is there a session" — [authState] is.
+     */
+    val currentUid: String?
+
+    /**
+     * Signs in with Google, **replacing whatever session is active** — including an anonymous one.
+     *
+     * ## Read this before calling it: it destroys the anonymous session
+     * This is [signInWithGoogle] with the anonymous-session protection removed, and that protection
+     * is the only thing standing between the user and an irreversible server-side deletion. When
+     * Firebase signs in over an anonymous account it **deletes that account**, together with every
+     * document written under its `uid`. Nothing in the app can undo it. See the warning on
+     * [signOut] — this reaches the same destruction by a route the user never asked to confirm.
+     *
+     * Today the loss is empty, because Firestore is still stubs and nothing writes server-side. That
+     * is a property of the current build, not of this operation, and it stops being true the moment
+     * DB-7 sync lands. **Do not call this from a code path that has not asked the user.**
+     *
+     * ## Why it is a separate method rather than a parameter
+     * The alternative was `signInWithGoogle(idToken, replaceSession = true)`. A boolean that
+     * silently doubles the destructiveness of a call is one somebody flips in a hurry; a distinct
+     * name makes the cost visible at every call site, and `signInWithGoogle`'s own KDoc can keep
+     * saying "safe".
+     *
+     * ## What the caller owes the user, and what it owes itself
+     * - Ask first. This is the only reason the method is public rather than private: the caller
+     *   needs the seam to put a dialog in front of it.
+     * - Re-key afterwards. This call moves the uid, so anything keyed by it has to follow. Read
+     *   [currentUid] BEFORE calling, because afterwards the old value is gone — see [currentUid] and
+     *   [SessionDataReassigner]. Skipping this orphans the user's profile and goals.
+     */
+    suspend fun signInWithGoogleReplacingSession(idToken: String): AppResult<Unit>
 
     /**
      * Creates the anonymous session the whole app starts from. **This is the default entry point.**
@@ -151,12 +204,15 @@ interface AuthRepository {
      *
      * ## The one case that is NOT free
      * If the address the user typed already belongs to a different account, the link fails with
-     * `ERROR_EMAIL_ALREADY_IN_USE` and the caller has to reconcile two unrelated data trees.
-     * **v1 deliberately does not build that merge.** The caller must instead surface an explicit,
-     * honest message telling the user that account already exists and that they should sign in
-     * with it. This is a documented non-goal, not an oversight: a silent partial merge would be
-     * worse than a refusal, and the happy path — the only one that matters to a user who typed
-     * *their own* address for the first time — is free.
+     * `ERROR_EMAIL_ALREADY_IN_USE` — Firebase will not attach a credential that already belongs
+     * somewhere else, and there is no "turn account A into account B" in Firebase Auth. The caller
+     * must therefore offer [signIn] as a second path rather than treat this as a dead end.
+     *
+     * **This is no longer a data-loss situation.** An earlier version of this note refused the case
+     * outright because it would have meant reconciling two Firestore trees. It is not one: the
+     * local schema keeps the diary in tables with no `userId` column at all, so signing into the
+     * existing account moves nothing but two small rows, which [SessionDataReassigner] re-keys.
+     * `ProfileViewModel` wires the two paths together.
      *
      * Other codes it must map: `ERROR_INVALID_EMAIL` and `ERROR_WEAK_PASSWORD` (both should have
      * been caught by ViewModel validation), `ERROR_NETWORK_REQUEST_FAILED`,
@@ -184,6 +240,49 @@ interface AuthRepository {
      * `ERROR_USER_DISABLED`, `ERROR_TOO_MANY_REQUESTS`, `ERROR_NETWORK_REQUEST_FAILED`.
      */
     suspend fun signIn(email: String, password: String): AppResult<Unit>
+
+    /**
+     * Signs in with a Google-issued OIDC **ID token**, and CLAIMS the current anonymous account
+     * when there is one.
+     *
+     * ## Why the token, and not a credential object
+     * The parameter is a `String`. Obtaining a Google credential requires showing a system account
+     * picker, which needs an `Activity` — something a repository must never hold, because an
+     * `Activity` reference outlives the screen that should have released it. So the picker runs in
+     * the Presentation layer and hands the token over as a plain value, which is what keeps
+     * Domain free of both `androidx.credentials` and any Firebase credential type. The
+     * implementation builds the `AuthCredential` itself.
+     *
+     * ## Why "sign in" is a lie when a session already exists
+     * `FirebaseAuth.signInWithCredential` on an account that is currently **anonymous** does not
+     * upgrade it: it REPLACES the session, which destroys the anonymous `uid` and every Firestore
+     * document written under it, permanently and server-side. The user would tap a login button
+     * and silently lose the diary they have been keeping since first launch.
+     *
+     * So this command reads the current session and **links** the Google credential when there is
+     * an anonymous account to keep. `linkWithCredential` returns the SAME `FirebaseUser` with the
+     * SAME `uid` — the identical mechanism that makes [promoteToEmailAccount] free — so no
+     * document moves and no merge is needed. It is the same trade the anonymous-first strategy
+     * already made for email, applied to the provider people actually use.
+     *
+     * With no current user it is an ordinary sign-in, and with a permanent credential already in
+     * place Firebase answers `ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL`, which the caller
+     * should treat as "you are already signed in".
+     *
+     * ## The one case that is NOT free
+     * If that Google account belongs to somebody else, the link fails with
+     * `ERROR_CREDENTIAL_ALREADY_IN_USE` and the caller has to reconcile two unrelated data trees.
+     * **v1 deliberately does not build that merge** — see the non-goal on
+     * [promoteToEmailAccount], which this command inherits unchanged. The credential arrives as
+     * [AuthErrorMarkers.CREDENTIAL_ALREADY_IN_USE] so the caller can say so honestly instead of
+     * asking the user to retry a tap that can never succeed.
+     *
+     * Codes: `ERROR_INVALID_ID_TOKEN` / `ERROR_TOKEN_EXPIRED` (a stale token; the caller should
+     * fetch a fresh one and try once more), `ERROR_OPERATION_NOT_ALLOWED` and
+     * `ERROR_PROVIDER_NOT_ENABLED` (see [AuthErrorMarkers.PROVIDER_DISABLED] — a console step,
+     * not a user error), `ERROR_NETWORK_REQUEST_FAILED`, `ERROR_TOO_MANY_REQUESTS`.
+     */
+    suspend fun signInWithGoogle(idToken: String): AppResult<Unit>
 
     /**
      * Creates a brand-new account, destroying any session the caller had.
@@ -258,6 +357,30 @@ object AuthErrorMarkers {
      * change. This token is ours.
      */
     const val CREDENTIAL_ALREADY_IN_USE = "auth.credential_already_in_use"
+
+    /**
+     * Marker for "the Google account you picked already exists, and you are currently anonymous".
+     *
+     * ## Why this is NOT [CREDENTIAL_ALREADY_IN_USE]
+     * The same Firebase code, `ERROR_CREDENTIAL_ALREADY_IN_USE`, arrives from two places that need
+     * opposite answers:
+     *
+     * - `promoteToEmailAccount` on an address that is taken → the user typed their own address for
+     *   the first time. There is a second path on screen ("ya tengo cuenta"); point them at it.
+     * - `signInWithGoogle` attempting to LINK a credential that is already attached elsewhere →
+     *   the user picked an account they already own. The only way in is to sign into it, which
+     *   **ends the anonymous session**, so the screen has to ask first.
+     *
+     * Overloading one marker for both forced the second case into the first case's copy, which on an
+     * anonymous session reads as advice the user cannot follow from that screen: "esa cuenta ya
+     * está registrada, iniciá sesión con ella" — they ARE trying to.
+     *
+     * ## It is a question, not an error
+     * The Presentation layer must render a dialog for it and never an error message. Anything that
+     * reaches the generic error path will invite a retry that can never succeed, because retrying
+     * the same tap produces the same code forever.
+     */
+    const val GOOGLE_ACCOUNT_EXISTS = "auth.google_account_exists"
 
     /**
      * Marker for "the email or password does not match an account". `ERROR_WRONG_PASSWORD` and

@@ -32,6 +32,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.racion.diariomercado.domain.repository.AuthState
+import com.racion.diariomercado.ui.components.AuthHeroBlock
+import com.racion.diariomercado.ui.components.LabeledDivider
 import com.racion.diariomercado.ui.components.PrimaryButton
 import com.racion.diariomercado.ui.components.SectionLabel
 import com.racion.diariomercado.ui.theme.NutriAppTheme
@@ -65,11 +67,16 @@ fun ProfileScreen(
     onShowClaimForm: () -> Unit,
     onDismissClaimForm: () -> Unit,
     onClaimSubmit: () -> Unit,
+    onClaimIntoExistingAccount: () -> Unit,
+    onSwitchClaimPath: (Boolean) -> Unit,
+    onGoogleSignInClick: () -> Unit,
     onSignInClick: () -> Unit,
     onRetrySignIn: () -> Unit,
     onSignOutClick: () -> Unit,
     onSignOutConfirmed: () -> Unit,
     onSignOutDismissed: () -> Unit,
+    onGoogleMergeConfirmed: () -> Unit,
+    onGoogleMergeDismissed: () -> Unit,
     onErrorShown: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -102,9 +109,14 @@ fun ProfileScreen(
             onShowClaimForm = onShowClaimForm,
             onDismissClaimForm = onDismissClaimForm,
             onClaimSubmit = onClaimSubmit,
+            onClaimIntoExistingAccount = onClaimIntoExistingAccount,
+            onSwitchClaimPath = onSwitchClaimPath,
+            onGoogleSignInClick = onGoogleSignInClick,
             onSignInClick = onSignInClick,
             onRetrySignIn = onRetrySignIn,
-            onSignOutClick = onSignOutClick
+            onSignOutClick = onSignOutClick,
+            onGoogleMergeConfirmed = onGoogleMergeConfirmed,
+            onGoogleMergeDismissed = onGoogleMergeDismissed
         )
 
         if (state.errorMessage != null) {
@@ -132,6 +144,13 @@ fun ProfileScreen(
             onDismiss = onSignOutDismissed
         )
     }
+
+    if (state.showGoogleMergeConfirmation) {
+        GoogleMergeConfirmationDialog(
+            onConfirm = onGoogleMergeConfirmed,
+            onDismiss = onGoogleMergeDismissed
+        )
+    }
 }
 
 /**
@@ -151,9 +170,14 @@ private fun AccountCard(
     onShowClaimForm: () -> Unit,
     onDismissClaimForm: () -> Unit,
     onClaimSubmit: () -> Unit,
+    onClaimIntoExistingAccount: () -> Unit,
+    onSwitchClaimPath: (Boolean) -> Unit,
+    onGoogleSignInClick: () -> Unit,
     onSignInClick: () -> Unit,
     onRetrySignIn: () -> Unit,
-    onSignOutClick: () -> Unit
+    onSignOutClick: () -> Unit,
+    onGoogleMergeConfirmed: () -> Unit,
+    onGoogleMergeDismissed: () -> Unit
 ) {
     when (state.authState) {
         AuthState.Unauthenticated -> UnauthenticatedContent(
@@ -169,7 +193,12 @@ private fun AccountCard(
             onShowClaimForm = onShowClaimForm,
             onDismissClaimForm = onDismissClaimForm,
             onClaimSubmit = onClaimSubmit,
-            onSignOutClick = onSignOutClick
+            onClaimIntoExistingAccount = onClaimIntoExistingAccount,
+            onSwitchClaimPath = onSwitchClaimPath,
+            onGoogleSignInClick = onGoogleSignInClick,
+            onSignOutClick = onSignOutClick,
+            onGoogleMergeConfirmed = onGoogleMergeConfirmed,
+            onGoogleMergeDismissed = onGoogleMergeDismissed
         )
 
         AuthState.Authenticated -> AuthenticatedContent(
@@ -242,87 +271,55 @@ private fun AnonymousContent(
     onShowClaimForm: () -> Unit,
     onDismissClaimForm: () -> Unit,
     onClaimSubmit: () -> Unit,
-    onSignOutClick: () -> Unit
+    onClaimIntoExistingAccount: () -> Unit,
+    onSwitchClaimPath: (Boolean) -> Unit,
+    onGoogleSignInClick: () -> Unit,
+    onSignOutClick: () -> Unit,
+    onGoogleMergeConfirmed: () -> Unit,
+    onGoogleMergeDismissed: () -> Unit
 ) {
-    Text(
-        text = "Sesión de invitado",
-        style = MaterialTheme.typography.titleLarge,
-        color = MaterialTheme.colorScheme.onSurface
+    // The same hero LOGIN uses, deliberately. Both screens answer the same question — "how do I get
+    // an account" — and a user who learned one of them should not have to re-read the other. The
+    // subtitle is the one thing that differs: here the diary ALREADY exists, so the copy is about
+    // keeping it, not about starting out.
+    AuthHeroBlock(
+        title = "Tu diario está a salvo",
+        subtitle = "Ya se está guardando en este dispositivo. Vinculá una cuenta para no perderlo " +
+            "si cambiás de teléfono o reinstalás la app."
     )
-    Spacer(Modifier.height(8.dp))
-    Text(
-        // Says what the state IS, not what is wrong with it: the user did nothing incorrect, they
-        // simply have not claimed the account yet, and an error-coloured treatment would say
-        // otherwise.
-        text = "Tu diario ya se está guardando. Reclamá la cuenta con un correo para no perderlo " +
-            "si reinstalás la app.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
+
     Spacer(Modifier.height(24.dp))
 
-    if (state.isClaimFormVisible) {
-        OutlinedTextField(
-            value = state.email,
-            onValueChange = onEmailChange,
-            label = { Text("Correo electrónico") },
-            singleLine = true,
-            enabled = !state.isLoading,
-            isError = state.errorMessage != null,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Email,
-                imeAction = ImeAction.Next
-            ),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = state.password,
-            onValueChange = onPasswordChange,
-            label = { Text("Contraseña") },
-            singleLine = true,
-            enabled = !state.isLoading,
-            isError = state.errorMessage != null,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Password,
-                imeAction = ImeAction.Done
-            ),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(20.dp))
+    // Google first, and outside the form on purpose. It is the only path that needs no typing, so
+    // burying it under two text fields would make the fastest option the hardest one to find. It is
+    // also the only path that does not ask the user to invent a password they may already forget.
+    GoogleSignInButton(
+        onClick = onGoogleSignInClick,
+        // Its own flag, not `isLoading`: this stays true while the user reads an account sheet,
+        // during which no email request is in flight. Merging them would leave the email form
+        // disabled behind the account chooser.
+        isLoading = state.isGoogleInProgress,
+        enabled = !state.isLoading,
+        modifier = Modifier.fillMaxWidth()
+    )
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Weight rather than a fixed width: the two buttons share the row, so their combined
-            // width survives a large system font scale, which a hard-coded 120.dp would not.
-            OutlinedButton(
-                onClick = onDismissClaimForm,
-                enabled = !state.isLoading,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("Cancelar")
-            }
-            Button(
-                onClick = onClaimSubmit,
-                // Disabled while loading, and that is what stops a double tap from firing two
-                // promotions — which is exactly how an account gets rate-limited.
-                enabled = !state.isLoading,
-                modifier = Modifier.weight(1f)
-            ) {
-                if (state.isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.height(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                } else {
-                    Text("Reclamar")
-                }
-            }
-        }
+    Spacer(Modifier.height(20.dp))
+    LabeledDivider(text = "o con tu correo")
+    Spacer(Modifier.height(20.dp))
+
+    if (state.isClaimFormVisible) {
+        ClaimForm(
+            state = state,
+            onEmailChange = onEmailChange,
+            onPasswordChange = onPasswordChange,
+            onSubmit = if (state.isClaimingExistingAccount) {
+                onClaimIntoExistingAccount
+            } else {
+                onClaimSubmit
+            },
+            onSwitchPath = onSwitchClaimPath,
+            onDismiss = onDismissClaimForm
+        )
     } else {
         PrimaryButton(text = "Reclamar tu cuenta", onClick = onShowClaimForm)
         // No spinner on this one: it only opens a form, there is no request in flight yet. The
@@ -348,6 +345,118 @@ private fun AnonymousContent(
         // the one on the Authenticated branch, which is free; the user has to be able to tell them
         // apart from the label alone.
         Text("Cerrar sesión y borrar mis datos")
+    }
+}
+
+/**
+ * The two email paths, as one form.
+ *
+ * ## Why "create" and "sign in" share a form instead of being two screens
+ * They ask for the same two fields. What differs is what happens next, and that difference is the
+ * whole reason this screen exists: Firebase will only link a credential that belongs to no other
+ * account, so an address that is already registered can never be claimed by linking — it has to be
+ * signed into, and signing in CHANGES the uid, which is the only case in the app where local rows
+ * have to move (see `RoomSessionDataReassigner`).
+ *
+ * ## Why the user picks, instead of Firebase figuring it out
+ * Firebase cannot. It answers "that address is taken" only AFTER trying, and the recovery differs by
+ * intent: someone who typed their own address for the first time wants a new account, while someone
+ * who has had one for a year wants their old settings back. A screen that guessed wrong either
+ * blocks a legitimate new signup or silently signs someone into an account they did not mean to
+ * enter. So the choice is explicit, up front, and reversible.
+ */
+@Composable
+private fun ClaimForm(
+    state: ProfileUiState,
+    onEmailChange: (String) -> Unit,
+    onPasswordChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    onSwitchPath: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val claimingExisting = state.isClaimingExistingAccount
+    val busy = state.isLoading || state.isGoogleInProgress
+
+    OutlinedTextField(
+        value = state.email,
+        onValueChange = onEmailChange,
+        label = { Text("Correo electrónico") },
+        singleLine = true,
+        enabled = !busy,
+        // An error while the field itself is fine is the normal case here: "ese correo ya tiene
+        // cuenta" is not a malformed address. Tinting the field red would blame the typing.
+        isError = false,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Email,
+            imeAction = ImeAction.Next
+        ),
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(12.dp))
+    OutlinedTextField(
+        value = state.password,
+        onValueChange = onPasswordChange,
+        label = { Text("Contraseña") },
+        singleLine = true,
+        enabled = !busy,
+        isError = false,
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Password,
+            imeAction = ImeAction.Done
+        ),
+        modifier = Modifier.fillMaxWidth()
+    )
+
+    Spacer(Modifier.height(8.dp))
+    // The switch is a text button, not a segmented control: two options do not need the machinery,
+    // and this way the consequence is stated in words ("tus metas y tu perfil se recuperan") rather
+    // than implied by a selected tab.
+    TextButton(
+        onClick = { onSwitchPath(!claimingExisting) },
+        enabled = !busy
+    ) {
+        Text(
+            if (claimingExisting) {
+                "No tengo cuenta: creá una con este correo"
+            } else {
+                "Ya tengo cuenta con este correo"
+            }
+        )
+    }
+
+    Spacer(Modifier.height(12.dp))
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Weight rather than a fixed width: the two buttons share the row, so their combined
+        // width survives a large system font scale, which a hard-coded 120.dp would not.
+        OutlinedButton(
+            onClick = onDismiss,
+            enabled = !busy,
+            modifier = Modifier.weight(1f)
+        ) {
+            Text("Cancelar")
+        }
+        Button(
+            onClick = onSubmit,
+            // Disabled while busy, and that is what stops a double tap from firing two claims —
+            // which is exactly how an account gets rate-limited.
+            enabled = !busy,
+            modifier = Modifier.weight(1f)
+        ) {
+            if (state.isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.height(20.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+            } else {
+                Text(if (claimingExisting) "Iniciar sesión" else "Crear cuenta")
+            }
+        }
     }
 }
 
@@ -444,6 +553,52 @@ private fun DestructiveSignOutDialog(
     )
 }
 
+/**
+ * Asks before switching an anonymous session into an existing Google account.
+ *
+ * The message is the whole design: the user picked a Google account they already own, and the
+ * only way in is signing into it — which ends the guest session irreversibly. There is no
+ * "link" here, because Firebase refuses to link a credential that belongs to another account.
+ *
+ * The buttons say exactly what happens. "Entrar a esa cuenta" makes the consequence explicit; a
+ * generic "Confirmar" would require the user to remember what they are confirming.
+ */
+@Composable
+private fun GoogleMergeConfirmationDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Esta cuenta de Google ya existe") },
+        text = {
+            Text(
+                "Elegiste una cuenta de Google que ya tenés registrada. Para entrar a ella, " +
+                    "tu sesión de invitado tiene que cerrarse. Lo que guardaste en este dispositivo " +
+                    "—tu nombre, tu foco de deporte y tus metas de calorías— se mueve a esa cuenta. " +
+                    "Tu diario no se toca: vive en tablas sin userId y sobrevive a cualquier cambio " +
+                    "de sesión."
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            ) {
+                Text("Entrar a esa cuenta")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Seguir como invitado")
+            }
+        }
+    )
+}
+
 /** Title paired with a known [ProfileUiState.claimedEmail]. */
 private const val AUTHENTICATED_TITLE = "Tu cuenta"
 
@@ -518,12 +673,17 @@ private fun ProfileScreenPreview(state: ProfileUiState) {
         onShowClaimForm = {},
         onDismissClaimForm = {},
         onClaimSubmit = {},
+        onClaimIntoExistingAccount = {},
+        onSwitchClaimPath = {},
+        onGoogleSignInClick = {},
         onSignInClick = {},
         onRetrySignIn = {},
         onSignOutClick = {},
-        onSignOutConfirmed = {},
-        onSignOutDismissed = {},
-        onErrorShown = {}
+onSignOutConfirmed = {},
+    onSignOutDismissed = {},
+    onGoogleMergeConfirmed = {},
+    onGoogleMergeDismissed = {},
+    onErrorShown = {}
     )
 }
 

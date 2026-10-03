@@ -141,11 +141,30 @@ fun OptionPill(text: String, selected: Boolean, onClick: () -> Unit, modifier: M
     }
 }
 
-/** Botón primario naranja de ancho completo. */
+/**
+ * Botón primario naranja de ancho completo.
+ *
+ * [isLoading] and [enabled] were added with the login screen's Google button and both default to
+ * the previous behaviour, so the six existing call sites compile untouched.
+ *
+ * The spinner REPLACES the label instead of sitting beside it: a button that keeps saying "Continuar"
+ * while it is already working invites the second tap, and that tap is a second sign-in attempt
+ * against the provider's per-account rate limit. The `enabled` argument stays available for the
+ * caller to disable the button for a reason that is not loading.
+ */
 @Composable
-fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun PrimaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    isLoading: Boolean = false
+) {
     Button(
         onClick = onClick,
+        // Disabled while loading, on top of whatever the caller asked for. Without the
+        // `!isLoading` term a caller that forgot it would open a second account sheet.
+        enabled = enabled && !isLoading,
         modifier = modifier
             .fillMaxWidth()
             .height(52.dp),
@@ -155,7 +174,81 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
             contentColor = MaterialTheme.colorScheme.onPrimary
         )
     ) {
-        Text(text, style = MaterialTheme.typography.titleLarge)
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onPrimary
+            )
+        } else {
+            Text(text, style = MaterialTheme.typography.titleLarge)
+        }
+    }
+}
+
+/**
+ * Una línea con el texto centrado: separa dos modos de ingreso sin pasar por una etiqueta de
+ * sección en mayúsculas, que aquí se leería como un encabezado.
+ *
+ * Both halves are the same `outlineVariant` at the same weight on purpose: a divider whose line is
+ * lighter than its text (or vice versa) makes the text look disabled, and "Ingresá con Google" is
+ * an invitation, not something greyed out.
+ */
+@Composable
+fun LabeledDivider(text: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 12.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
+    }
+}
+
+/**
+ * Bloque de cabecera con la identidad de la app, para las pantallas fuera de la barra inferior.
+ *
+ * It reuses the `inverseSurface` roles exactly like [DarkStatCard] does, on purpose: in light mode
+ * it is the same dark slab the "Confirmar" screen already uses, and in dark mode the roles invert
+ * to cream. That means the auth screens look like the rest of the app in BOTH modes instead of
+ * needing a second palette that only exists at login.
+ */
+@Composable
+fun AuthHeroBlock(
+    title: String,
+    subtitle: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.extraLarge)
+            .background(MaterialTheme.colorScheme.inverseSurface)
+            .padding(24.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.inverseOnSurface
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.72f)
+        )
     }
 }
 

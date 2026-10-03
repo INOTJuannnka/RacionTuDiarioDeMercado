@@ -1,10 +1,14 @@
 package com.racion.diariomercado.data.openfood
 
+import com.racion.diariomercado.core.AppError
 import com.racion.diariomercado.core.AppResult
 import com.racion.diariomercado.data.openfood.dto.OffProductDto
 import com.racion.diariomercado.domain.model.FoodProduct
 import com.racion.diariomercado.domain.model.Nutrition
 import com.racion.diariomercado.domain.repository.FoodCatalogRepository
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import retrofit2.HttpException
 
 /**
  * [FoodCatalogRepository] backed by the Open Food Facts API.
@@ -45,14 +49,34 @@ internal class OpenFoodFactsCatalogRepository(
      * `AppError.RateLimited`, any other non-2xx -> `AppError.Server(code, message)`, and
      * anything else -> `AppError.Unknown(it)`.
      */
-    override suspend fun productByBarcode(barcode: String): AppResult<FoodProduct> =
-        // TODO(OFF-2): implement. Note this throws NotImplementedError (an Error, NOT an Exception):
-        // the documented "no method may throw" contract applies to REAL implementations, and callers
-        // writing `catch (e: Exception)` will not catch this stub. Remove this method body entirely
-        // when the implementation lands.
-        throw NotImplementedError(
-            "FoodCatalogRepository.productByBarcode is not implemented yet (OFF-2)"
-        )
+    override suspend fun productByBarcode(barcode: String): AppResult<FoodProduct> {
+        return try {
+            val response = service.productByBarcode(barcode)
+            val status = response.status
+            val product = response.product
+            if (status != 1 || product == null) {
+                AppResult.Failure(AppError.NotFound)
+            } else {
+                val mapped = product.toFoodProduct()
+                if (mapped == null) {
+                    AppResult.Failure(AppError.NotFound)
+                } else {
+                    AppResult.Success(mapped)
+                }
+            }
+        } catch (e: HttpException) {
+            when (val code = e.code()) {
+                429, 503 -> AppResult.Failure(AppError.RateLimited)
+                else -> AppResult.Failure(AppError.Server(code, e.message()))
+            }
+        } catch (e: UnknownHostException) {
+            AppResult.Failure(AppError.Network)
+        } catch (e: SocketTimeoutException) {
+            AppResult.Failure(AppError.Network)
+        } catch (e: Throwable) {
+            AppResult.Failure(AppError.Unknown(e))
+        }
+    }
 
     /**
      * TODO(OFF-3): call [OpenFoodFactsService.searchV1] (v2 has no free text), map each
@@ -70,33 +94,65 @@ internal class OpenFoodFactsCatalogRepository(
         )
 
     /**
-     * DTO -> domain mapping (OFF-3).
+     * DTO -> domain mapping.
      *
-     * TODO: return `null` when there is no usable product name — the catalog is
-     * crowd-sourced and unnamed rows exist. Normalise [OffProductDto.nutritionGrades] to lower
-     * case, split [OffProductDto.categories] on commas, and take the first brand when
-     * [OffProductDto.brands] contains several.
+     * Returns `null` when there is no usable product name: the catalog is crowd-sourced and
+     * unnamed rows exist, and a nameless product cannot be rendered on a diary entry.
+     * [FoodCatalogRepository.productByBarcode] reports that as [AppError.NotFound], the same as
+     * a barcode OFF has never seen — deliberately, because from the user's point of view both
+     * mean "there is nothing to show here".
      */
-    private fun OffProductDto.toFoodProduct(): FoodProduct? =
-        // TODO(OFF-3): implement. Note this throws NotImplementedError (an Error, NOT an Exception):
-        // the documented "no method may throw" contract applies to REAL implementations, and callers
-        // writing `catch (e: Exception)` will not catch this stub. Remove this method body entirely
-        // when the implementation lands.
-        throw NotImplementedError(
-            "OffProductDto.toFoodProduct is not implemented yet (OFF-3)"
+    private fun OffProductDto.toFoodProduct(): FoodProduct? {
+        val usableName = productName?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return FoodProduct(
+            barcode = code.orEmpty(),
+            name = usableName,
+            // OFF routinely joins several brands with a comma ("Canuelas,Marca Dos"). One
+            // product has one brand here, so the first non-blank entry wins.
+            brand = brands.splitOnCommas().firstOrNull(),
+            quantityLabel = quantity?.trim()?.takeIf { it.isNotEmpty() },
+            servingGrams = servingQuantity,
+            nutritionPer100g = toNutrition(),
+            imageUrl = imageFrontUrl?.trim()?.takeIf { it.isNotEmpty() },
+            // OFF stores the Nutriscore grade inconsistently cased across rows.
+            nutriscoreGrade = nutritionGrades?.trim()?.lowercase()?.takeIf { it.isNotEmpty() },
+            categories = categories.splitOnCommas(),
+            ingredientsText = ingredientsText?.trim()?.takeIf { it.isNotEmpty() }
         )
+    }
 
     /**
-     * TODO: map the `nutriments` sub-object into [Nutrition], rounding [Nutrition.kcal].
-     * A product with no `nutriments` at all maps to `Nutrition()` rather than being dropped,
-     * so the user can still log a manually-typed product.
+     * Maps the `nutriments` sub-object into [Nutrition].
+     *
+     * A product with no `nutriments` at all maps to `Nutrition()` rather than being dropped, so
+     * the user can still log it. **That is the OFF-5a decision**: register with zeroes instead
+     * of blocking. The consequence is that a zero here is ambiguous — it means "OFF has no data"
+     * just as much as it means "this product has no calories" — which is why surfacing that
+     * distinction in the UI is a separate, still-open task rather than something this mapping
+     * can solve on its own.
      */
-    private fun OffProductDto.toNutrition(): Nutrition =
-        // TODO(OFF-3): implement. Note this throws NotImplementedError (an Error, NOT an Exception):
-        // the documented "no method may throw" contract applies to REAL implementations, and callers
-        // writing `catch (e: Exception)` will not catch this stub. Remove this method body entirely
-        // when the implementation lands.
-        throw NotImplementedError(
-            "OffProductDto.toNutrition is not implemented yet (OFF-3)"
+    private fun OffProductDto.toNutrition(): Nutrition {
+        val n = nutriments ?: return Nutrition()
+        return Nutrition(
+            // Rounded, never truncated, and with the same HALF_UP convention
+            // `Nutrition.scaled` uses, so a per-serving total never drifts from the per-100 g
+            // figure it was derived from.
+            kcal = Math.round(n.energyKcal100g ?: 0.0).toInt(),
+            carbsG = n.carbohydrates100g ?: 0.0,
+            proteinG = n.proteins100g ?: 0.0,
+            fatG = n.fat100g ?: 0.0,
+            sugarsG = n.sugars100g ?: 0.0,
+            fiberG = n.fiber100g ?: 0.0,
+            sodiumG = n.sodium100g ?: 0.0
         )
+    }
+
+    /**
+     * Splits an OFF comma-separated field into trimmed, non-blank parts.
+     *
+     * OFF is sloppy with these: trailing commas, doubled separators and stray whitespace all
+     * occur, and an empty [categories] string must not become a list holding one empty string.
+     */
+    private fun String?.splitOnCommas(): List<String> =
+        this?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
 }

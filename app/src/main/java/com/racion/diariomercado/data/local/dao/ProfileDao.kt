@@ -38,4 +38,50 @@ interface ProfileDao {
 
     @Upsert
     suspend fun saveProfile(profile: UserProfileEntity)
+
+    /**
+     * Re-keys the profile row from one uid to another. Used by the anonymous-account claim flow.
+     *
+     * The `WHERE` clause is the whole method: an `UPDATE` written without it would re-key EVERY row
+     * in the table and hand one user's name and sport focus to another. `SessionDataReassignerTest`
+     * pins that case.
+     *
+     * `userId` is the PRIMARY KEY, so this throws a constraint violation if a row for
+     * [newUserId] already exists. The caller deletes that row first — see the collision note on
+     * `SessionDataReassigner.reassign` — which is why this method is not expected to be safe to call
+     * on its own.
+     *
+     * @return the number of rows moved, so a caller can tell "moved" from "there was nothing there"
+     *   without a second query.
+     */
+    @Query("UPDATE user_profiles SET userId = :newUserId WHERE userId = :oldUserId")
+    suspend fun reassignUserId(oldUserId: String, newUserId: String): Int
+
+    /**
+     * Drops the anonymous row ONLY when the account being claimed already owns one on this device.
+     *
+     * ## Why this exists instead of a delete-then-update
+     * `userId` is the PRIMARY KEY, so moving the source row onto an occupied target throws. The
+     * obvious fix — delete the target, then move the source in — gets the precedence exactly
+     * backwards: it makes the anonymous row win, which is the opposite of what a user signing into
+     * their own account expects. It would also overwrite whatever that account had configured.
+     *
+     * So the precedence is stated here instead: if the target row exists, it is the winner and the
+     * source is dropped. Written as one statement with `EXISTS` rather than a read followed by a
+     * branch, so it cannot be reached with a stale read and needs no extra DAO method.
+     *
+     * Call this BEFORE [reassignUserId]. Together they express the whole policy: drop the source if
+     * the target is taken, otherwise move it.
+     *
+     * @return the number of rows deleted: 1 if the target was taken, 0 if it was free or the source
+     *   had no row.
+     */
+    @Query(
+        """
+        DELETE FROM user_profiles
+         WHERE userId = :oldUserId
+           AND EXISTS (SELECT 1 FROM user_profiles WHERE userId = :newUserId)
+        """
+    )
+    suspend fun deleteSourceIfTargetExists(oldUserId: String, newUserId: String): Int
 }

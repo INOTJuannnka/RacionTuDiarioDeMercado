@@ -58,6 +58,6 @@ interface OpenFoodFactsService {
          */
         const val OFF_FIELDS =
             "code,product_name,brands,quantity,serving_quantity,serving_size," +
-                "categories,ingredients_text,nutrition_grades,image_front_url,nutriments"
+                "categories,ingredients_text,nutrition_grades,image_front_url,countries_tags,nutriments"
     }
 }

@@ -65,22 +65,47 @@ El diario, el perfil y las metas viven en ROOM. Toda escritura va primero a la b
 es la proyección de sync/backup, nunca el primer destino. Esto satisface el requisito de entrega de
 una base local y le queda bien a una app de mercado con señal intermitente.
 
-- [ ] **DB-1.** Agregar `androidx.room:room-runtime`, `room-ktx` y `room-compiler` (por KSP) a
+- [x] **DB-1.** Agregar `androidx.room:room-runtime`, `room-ktx` y `room-compiler` (por KSP) a
       `libs.versions.toml`; habilitar el plugin KSP en `app/build.gradle.kts` (esto también
       destraba los adapters de Moshi generados de `OFF-1`).
-- [ ] **DB-2.** Entities: `DiaryEntryEntity`, `FoodProductEntity` (caché de catálogo para `LOCAL-*` y
+      *Hecho (J3, 3 oct 2026).* Room `2.8.5`, KSP `2.3.12`. Tres desviaciones forzadas por fallos
+      observados: KSP se elige contra **AGP 9.4.0** (built-in Kotlin prohíbe la línea 2.2.x) y la
+      línea 2.3.x dropeó el sufijo `-2.0.x`; Room lleva `version.ref` explícito porque el BOM de
+      Compose 2026.02.01 no contiene `androidx.room`; y `RoomSchemaArgProvider` usa `@InputFiles`,
+      no el `@InputDirectory` documentado, que falla en Gradle 9.6.
+- [x] **DB-2.** Entities: `DiaryEntryEntity`, `FoodProductEntity` (caché de catálogo para `LOCAL-*` y
       productos escaneados), `NutritionGoalsEntity`, `UserProfileEntity`. Los day keys son strings
       `yyyy-MM-dd` para que una semana sea una consulta de rango léxica, igual que el layout de
       Firestore.
-- [ ] **DB-3.** DAOs: `DiaryDao` (entradas por día, por semana, upsert, delete), `GoalsDao`,
+      *Hecho (J4).* `Nutrition` se **aplana** en 7 columnas: embebido las escondería tras
+      `nutrition.kcal`, donde `SUM` no llega. Sin columna `onboardingCompleted`: el consentimiento
+      debe poder escribirse independiente de un write de perfil. El cacheo de `LOCAL-*` se reportan
+      como fixtures de `PreviewData`, no como datos reales.
+- [x] **DB-3.** DAOs: `DiaryDao` (entradas por día, por semana, upsert, delete), `GoalsDao`,
       `ProfileDao`, `CatalogDao`. Cada read expone un `Flow` — un stream por pantalla.
-- [ ] **DB-4.** Los totales del día se calculan con `SUM` en la query del DAO — nada de
+      *Hecho (J4).* La semana es un rango **semiabierto** `>= from AND < to`: el límite superior
+      exclusivo es el lunes siguiente, que quien camina de semana en semana ya tiene. Un
+      `BETWEEN` inclusivo obliga a sumar 6 días en el call site y se infla a 8 sin que nadie se entere.
+- [x] **DB-4.** Los totales del día se calculan con `SUM` en la query del DAO — nada de
       write-contention de documento local. Los totales remotos en `days/{date}` siguen siendo la
       proyección server-side del sync.
-- [ ] **DB-5.** Índices: `@Index` en `DiaryEntry.dayKey` y un `@Index` único en
+      *Hecho (J4).* `SUM` + `COALESCE(...,0)` sobre los 7 campos, con proyección dedicada
+      `DayNutritionTotals` (no `Nutrition`). El `COALESCE` no es decorativo: `SUM` sobre cero filas
+      devuelve `NULL`, y eso fusiona "no comió nada" (0) con "la query está rota" (null) para quien
+      tiene que distinguirlos.
+- [x] **DB-5.** Índices: `@Index` en `DiaryEntry.dayKey` y un `@Index` único en
       `CatalogEntry.barcode`.
-- [ ] **DB-6.** `RoomDatabase` versionada con estrategia de migración desde el primer día (una ruta de
+      *Hecho (J4).* `CatalogEntry` no existe: el tipo real es `FoodProductEntity`, así que el índice
+      único va en `FoodProductEntity.barcode` (redundante con la PK, pero el schema exportado es el
+      artefacto contra el que se valida una migración). Foreign key del diario al catálogo con
+      **`onDelete = RESTRICT`**: `CASCADE` desde una caché podable borraría en silencio el diario
+      del usuario con un `DELETE` de housekeeping rutinario. Hay dos tests que lo fijan.
+- [x] **DB-6.** `RoomDatabase` versionada con estrategia de migración desde el primer día (una ruta de
       migración vacía es aceptable pre-release, pero la fontanería existe).
+      *Hecho (J4).* `version = 1`, `exportSchema = true`, **sin**
+      `fallbackToDestructiveMigration()`. Schema v1 exportado a
+      `app/schemas/.../RationDatabase/1.json` (`identityHash cbbd157752eb056ac4fdeabfa180f692`).
+      Pendiente de commitear ese JSON: sin él no hay línea base contra la que diffear la v2.
 
 ### 2.2 Proyecto y configuración
 
@@ -161,6 +186,13 @@ una base local y le queda bien a una app de mercado con señal intermitente.
       (`pushAdd` + `increment` sobre el doc del día, `pushDelete` + decrement), después traer los
       cambios remotos a ROOM. Idempotente sobre el id de la entrada — el id de entrada es la clave
       natural de sync.
+      *Hecho, salvo el pull.* La bandeja de salida, la migración y el drenaje están implementados:
+      tabla `sync_outbox` (`entryId` como PK, que hace el coalescing), `MIGRATION_1_2` testeada
+      contra la v1 real con `MigrationTestHelper`, y `DiarySyncManager.drain(limit)` con borrado
+      sólo tras `Success` y corte en el primer fallo. El lado remoto es un seam: `SyncTransport` es
+      una interfaz y la implementación Firestore (`pushAdd`/`increment`, `pushDelete`/`decrement`)
+      **no** está escrita — sin ella el `DiarySyncManager` no tiene a quién empujar. Tampoco hay
+      scheduler: nadie llama a `drain()` todavía.
 - [ ] **DB-8.** Política de conflictos: last-write-wins por entrada con server timestamps; nunca
       fusionar dentro de una misma entrada. Un pull nunca debe borrar filas locales que todavía no
       se subiéron. Documentar la política antes del primer sync, y mantener el job de reparación de
@@ -249,6 +281,11 @@ una base local y le queda bien a una app de mercado con señal intermitente.
       los totales del día con `SUM` y la bandeja de salida de sync. Los tests con el emulator de
       Firestore cubren sólo la proyección de sync (aritmética increment / decrement y el camino
       offline).
+      *Parcial (J4, 3 oct 2026): 58 tests nuevos de DAO con base en memoria, 0 salteados.*
+      Cubierto: queries de DAO (día, semana, upsert, delete), totales con `SUM` + `COALESCE`,
+      converters (JSON de categorías con comas, `activeDays`), defaults de entities, y las dos
+      reglas de integridad del catálogo (`RESTRICT` y FK). Falta la bandeja de salida de sync, que
+      depende de `DB-7`.
 - [ ] **Q-4.** Un test grabado con `MockWebServer` que verifique que el header `User-Agent` de OFF
       sale de verdad, y que `status = 0` mapea a `NotFound`. Son los dos bugs de OFF que fallan en
       silencio cuando regresan.

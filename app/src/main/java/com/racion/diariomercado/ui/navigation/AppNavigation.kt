@@ -191,8 +191,7 @@ fun AppNavigation(
         }
         composable(Routes.PERFIL) {
             MetasScreen(
-                onSave = { goals ->
-                    // TODO(FF-5): goalsRepository.saveGoals(goals)
+                onSave = { _ ->
                     navController.navigate(Routes.INICIO) {
                         popUpTo(navController.graph.findStartDestination().id)
                         launchSingleTop = true
@@ -235,8 +234,7 @@ fun AppNavigation(
         }
         composable(Routes.PERFIL_DEPORTIVO) {
             PerfilDeportivoScreen(
-                onContinue = { focus ->
-                    // TODO(FF-5): profileRepository.saveProfile(...)
+                onContinue = { _ ->
                     navController.navigate(Routes.PERFIL)
                 },
                 onNavigate = ::selectTab
@@ -264,7 +262,31 @@ composable(Routes.LOGIN) {
             // container is read once per composition instead of once per factory invocation.
             val container = rememberAppContainer()
             val authRepository = container.authRepository
-            val viewModel: LoginViewModel = remember { LoginViewModel(authRepository, container.sessionDataReassigner) }
+            // MANDATORY: the factory, NEVER `remember { LoginViewModel(...) }`. Both spellings
+            // compile, which is exactly why the wrong one is dangerous.
+            //
+            // `remember` scopes the ViewModel to the COMPOSITION. `viewModel()` scopes it to the
+            // `NavBackStackEntry`, which is the thing that actually represents "this destination".
+            // The difference is invisible until the pending Google sign-in is involved:
+            // `pendingGoogleIdToken` is a FIELD of the ViewModel (written when the chosen account
+            // already exists, read back on confirm). Leave this destination and the composition is
+            // disposed, the back stack entry keeps its saved state, and a brand new ViewModel is
+            // built with a `null` token. `onGoogleMergeConfirmed()` then returns on its
+            // `?: return`: the dialog closes, nothing happens, and the user is left on a spinner
+            // that no coroutine owns any more, because the previous `viewModelScope` was cancelled
+            // along with the composition. The account-existing path becomes unreachable and the
+            // failure is completely silent.
+            //
+            // This is not hypothetical — it shipped, and it is what "se queda creando sesión" was.
+            // `Routes.CUENTA` below always used the factory, which is why the identical flow worked
+            // there and failed only here.
+            val viewModel: LoginViewModel = viewModel(
+                factory = viewModelFactory {
+                    initializer {
+                        LoginViewModel(authRepository, container.sessionDataReassigner)
+                    }
+                }
+            )
             val state by viewModel.uiState.collectAsStateWithLifecycle()
 
             // The account picker needs an Activity context, so it cannot live in `LoginScreen`
@@ -319,7 +341,13 @@ composable(Routes.LOGIN) {
 composable(Routes.REGISTRO) {
             val container = rememberAppContainer()
             val authRepository = container.authRepository
-            val viewModel: LoginViewModel = remember { LoginViewModel(authRepository, container.sessionDataReassigner) }
+            val viewModel: LoginViewModel = viewModel(
+                factory = viewModelFactory {
+                    initializer {
+                        LoginViewModel(authRepository, container.sessionDataReassigner)
+                    }
+                }
+            )
             val state by viewModel.uiState.collectAsStateWithLifecycle()
 
             LaunchedEffect(state.isLoggedIn) {

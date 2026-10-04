@@ -16,9 +16,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /**
  * [AuthRepository] backed by Firebase Authentication.
@@ -45,7 +42,8 @@ import kotlin.coroutines.resumeWithException
  * [AppResult].
  *
  * ## No `.await()`, on purpose
- * [awaitTask] below bridges `Task` to `suspend` by hand instead of using
+ * [awaitTask] — in `TaskAwait.kt`, shared with the Firestore repositories — bridges `Task` to
+ * `suspend` by hand instead of using
  * `kotlinx.coroutines.tasks.await`. That extension lives in `kotlinx-coroutines-play-services`,
  * which is a **separate artifact** from `kotlinx-coroutines-android` and is NOT on this module's
  * classpath — only `implementation(libs.kotlinx.coroutines.android)` is
@@ -439,37 +437,9 @@ internal class FirebaseAuthRepository : AuthRepository {
     }
 }
 
-/**
- * Bridges a Firebase [Task] to a `suspend` function.
- *
- * This is a local stand-in for `kotlinx.coroutines.tasks.await`. It is the piece Gemini's version
- * silently assumed: that extension is published in `kotlinx-coroutines-play-services`, a separate
- * artifact from `kotlinx-coroutines-android`, and it is not on this module's classpath. Importing
- * it would not compile.
- *
- * `addOnCompleteListener` fires on the main thread once the task settles, which is why the
- * continuation is resumed there and the caller resumes on its own dispatcher. If the coroutine is
- * already cancelled when the task settles, [kotlinx.coroutines.CancellableContinuation.resume]
- * reports a benign `IllegalStateException` about resuming after cancellation rather than corrupting
- * state, so no extra guard is needed on the resume path.
- *
- * Cancellation cannot be pushed into the task: a Firebase write already handed to the network layer
- * is not retractable, so the honest `invokeOnCancellation` block is empty. The task still completes
- * and its result is discarded — which is exactly right for a sign-in, because the *session* is what
- * persists, not the return value, and [AuthRepository.authState] is the source of truth for it.
- */
-private suspend fun <T> Task<T>.awaitTask(): T = suspendCancellableCoroutine { continuation ->
-    addOnCompleteListener { task ->
-        val error = task.exception
-        if (error != null) {
-            continuation.resumeWithException(error)
-        } else {
-            continuation.resume(task.result)
-        }
-    }
-    // The task cannot be cancelled, so there is nothing to undo here. See the KDoc.
-    continuation.invokeOnCancellation { }
-}
+// The `Task` -> `suspend` bridge this class used eight times now lives in `TaskAwait.kt`, shared
+// with the Firestore repositories. See that file for why it is hand-written instead of
+// `kotlinx.coroutines.tasks.await`.
 
 // --- Firebase error codes, as literals -------------------------------------------------------
 // FirebaseAuthException exposes these as constants, but they are not on the public API surface of

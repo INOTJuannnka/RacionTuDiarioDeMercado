@@ -291,7 +291,24 @@ exista el wiring. Eso es un paso posterior, no un defecto de J3/J4.
 ### J5 · Mergear a `main`
 Sólo con `:app:assembleDebug` y `:app:testDebugUnitTest` en verde.
 
-### J6 · FF-4 — Habilitar los providers en Firebase Console *(bloquea a Daniel)*
+### J5b · Sesión y persistencia de perfil/metas — **HECHO** (4 oct 2026)
+Entregado en 4 PRs encadenados (#5 → #6 → #7 → #8) sobre la rama `Julian`:
+
+| PR   | Alcance                                                              | Diff      |
+|------|----------------------------------------------------------------------|-----------|
+| #5   | Scoping del `LoginViewModel` al back stack + hero oscuro + `awaitTask` | +235/−57  |
+| #6   | Mapeo documento ↔ dominio con 27 tests                                | +522      |
+| #7   | `FirestoreGoalsRepository` + `FirestoreProfileRepository`             | +296/−75  |
+| #8   | Cableado en `AppContainer` / `RacionApplication` / `AppNavigation`    | +500/−19  |
+
+Suite completa: **216 tests, 0 fallos**. Los 4 commits de la cadena compilan por separado,
+verificados uno por uno.
+
+Cubre `FF-4` (completo salvo el provider de la consola) y `FF-7` a medias: `AppContainer`
+expone los repositorios, pero `MainActivity` sigue con `SharedPreferences`, así que **ningún
+`init` de Firestore es alcanzable desde la app todavía**.
+
+### J6 · FF-4 — Habilitar los providers en Firebase Console *(bloquea a Daniel)* — **PENDIENTE**
 En **Authentication → Sign-in method**:
 
 - **Anonymous**: habilitado. Es el arranque de toda sesión nueva.
@@ -302,6 +319,15 @@ En **Authentication → Sign-in method**:
 > **No se puede probar ningún sign-in hasta que esté.** Con el provider apagado, Firebase falla en
 > runtime con un error poco descriptivo, y es fácil perder horas debuggeando el repositorio cuando
 > el problema real era un toggle en la consola. Hacelo antes de que Daniel mergee su rama.
+>
+> Sigue abierto: la suite pasa sin tocar la consola porque todo el auth está mockeado. Nunca se
+> verificó un sign-in real contra Firebase.
+
+### J7 · FF-5 — Reglas de seguridad — **PENDIENTE, BLOQUEANTE**
+El repo **no tiene `firestore.rules` ni `firebase.json`**, y la app ya escribe a Firestore. La
+especificación deny-by-default está en `docs/INTEGRATION.md` §2.2 pero no está aplicada. Hasta
+que exista y esté desplegado, el estado de seguridad real depende de lo configurado a mano en la
+consola.
 
 ---
 

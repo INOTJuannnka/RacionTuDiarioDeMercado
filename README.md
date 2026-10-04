@@ -41,8 +41,10 @@ App Android (Kotlin + Jetpack Compose) para llevar el registro diario de tu alim
 
 ## 🏗️ Estructura
 
-El paquete de la app es `com.racion.diariomercado`. La capa de datos todavía no está conectada:
-las pantallas se alimentan de `ui/preview/PreviewData` y corren completas sin backend.
+El paquete de la app es `com.racion.diariomercado`. La capa de datos está **parcialmente**
+conectada: las escrituras de perfil, metas y consentimiento van a Firestore, pero las
+pantallas siguen alimentándose de `ui/preview/PreviewData` para leer. Corren completas sin
+backend.
 
 ```
 app/src/main/java/com/racion/diariomercado/
@@ -54,10 +56,11 @@ app/src/main/java/com/racion/diariomercado/
 │  ├─ model/              # Nutrition, FoodProduct, DiaryEntry, DailySummary, WeeklyReport,
 │  │                      #   NutritionGoals, UserProfile + enums (MealSlot, DayOfWeek, SportFocus)
 │  └─ repository/         # Interfaces: FoodCatalog, Diary, Goals, Profile
-├─ data/                  # Implementaciones (TODOs marcados)
+├─ data/                  # Implementaciones
+│  ├─ local/              # ROOM: DAO, entidades, converters, outbox de sync
 │  ├─ openfood/           # Retrofit service, DTOs Moshi, repositorio del catálogo
 │  │  └─ dto/
-│  └─ firebase/           # Los tres repositorios de Firestore
+│  └─ firebase/           # Auth + Goals + Profile implementados; Diary es stub
 └─ ui/
    ├─ components/         # AppComponents: MealRow, MacroStat, OptionPill, DarkStatCard, etc.
    ├─ navigation/         # AppNavigation y rutas
@@ -68,7 +71,10 @@ app/src/main/java/com/racion/diariomercado/
 
 docs/
 ├─ ROADMAP.md             # Checklist por fases (FF-N / OFF-N / BC-N / ST-N / Q-N)
+├─ SPRINT-1.md            # Plan del sprint 1, con reparto por lane y dueño
 └─ INTEGRATION.md         # Referencia verificada de Open Food Facts y Firestore
+
+ odd/tasks/               # Un doc por feature: decisiones, evidencia, pendientes
 ```
 
 **Regla de dependencia:** `ui` → `domain` → nada. `data` implementa `domain` y conoce `domain`.
@@ -77,19 +83,26 @@ Ningún archivo de `domain/` importa Compose, Android ni `kotlinx`. Los reposito
 
 ## 🗺️ Estado del proyecto / Próximos pasos
 
-La app es, hoy, **UI + tema + navegación funcionando sobre datos fake**. La capa de datos está
-declarada como interfaces y esqueletos, pero los métodos son `TODO(...)`: no hay red ni
-persistencia todavía. Es intencional — la prioridad era que el modelo de dominio y los seams
-quedaran correctos antes de conectar un backend.
+La app es, hoy, **UI + tema + navegación funcionando sobre datos fake, con escritura real a
+Firestore para perfil y metas**. El camino de escritura existe y está cableado; el de lectura
+todavía no: `observeProfile` y `observeGoals` no tienen consumidores, así que las pantallas
+siguen mostrando `PreviewData`. El diario sigue enteramente en ROOM
+(`FirestoreDiaryRepository` es un stub que tira `NotImplementedError`).
 
 Para seguir:
 
-1. **[`docs/ROADMAP.md`](docs/ROADMAP.md)** — el checklist ordenado por fases. Empezá por la
-   Fase 2 (Firebase) o la Fase 3 (Open Food Facts); cada tarea tiene un ID (`FF-N`, `OFF-N`)
-   que podés buscar con `grep` en los `TODO` del código.
+1. **[`docs/ROADMAP.md`](docs/ROADMAP.md)** — el checklist ordenado por fases. La Fase 2
+   (Firebase) está parcialmente hecha: falta el gate de onboarding en `MainActivity` (FF-7), las
+   reglas de seguridad (FF-5) y el sync del diario (DB-7/DB-8). La Fase 3 (Open Food Facts) es
+   la que sigue más completa. Cada tarea tiene un ID (`FF-N`, `OFF-N`) que podés buscar con
+   `grep` en los `TODO` del código.
 2. **[`docs/INTEGRATION.md`](docs/INTEGRATION.md)** — la referencia externa verificada
    (endpoints de Open Food Facts, límites de tasa, nombres exactos de los campos `nutriments`,
    límites y trampas de Firestore). Está para que nadie tenga que volver a deducirla.
+
+> ⚠️ **Antes de publicar:** el repo **no tiene `firestore.rules`**. La app ya escribe a
+> Firestore sin reglas versionadas que lo gobiernen. La especificación de reglas está en
+> `docs/INTEGRATION.md` §2.2.
 
 Lo primero que falla si se saltea, y conviene saber de antemano:
 
@@ -100,8 +113,9 @@ Lo primero que falla si se saltea, y conviene saber de antemano:
 - **La búsqueda de texto libre solo existe en el endpoint v1** (`cgi/search.pl`); la v2 no la
   soporta. Y está prohibido el search-as-you-type: el límite es de 10 requests/minuto.
 
-Decisiones abiertas (Firestore vs Realtime Database, auth anónimo vs cuentas reales, Hilt o no,
-cachear OFF) están en la sección **Decisions to make** del roadmap.
+Decisiones ya tomadas: **Firestore** (no Realtime Database) como backend remoto, **anónimo
+primero** como estrategia de cuenta, **DI manual** sin Hilt, y **no cachear** respuestas de OFF
+en Firestore. El detalle y el porqué están en `docs/INTEGRATION.md` §1.8 y en los `odd/tasks/`.
 
 ## 📄 Licencia
 

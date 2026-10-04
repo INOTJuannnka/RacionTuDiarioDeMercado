@@ -134,27 +134,37 @@ una base local y le queda bien a una app de mercado con señal intermitente.
       anónimo es seguro, porque reclamar la cuenta vincula una credencial con `linkWithCredential`,
       que **preserva el mismo `uid`** — no se mueve ningún documento y no hace falta ningún merge de
       datos.
-      - [ ] Implementar el `FirebaseAuthRepository` real: `callbackFlow` sobre
+      - [x] Implementar el `FirebaseAuthRepository` real: `callbackFlow` sobre
             `addAuthStateListener`, cerrado con
-            `awaitClose { removeAuthStateListener(listener) }`. Esto es lo que reemplaza el stub
-            actual `flowOf(AuthState.Unauthenticated)`, que **completa** tras una sola emisión y por
-            tanto viola el contrato de que `authState` nunca completa. El listener debe resolver
-            **tres** estados — `Unauthenticated` / `Anonymous` / `Authenticated` — no dos.
-      - [ ] `signInAnonymously()` es el punto de entrada por defecto y debe correr antes de cualquier
-            lectura o escritura de Firestore, porque las reglas de seguridad y los paths
-            `users/{uid}` están indexados sobre un `currentUser` que todavía no existe. Es una
-            llamada de red y puede fallar.
-      - [ ] `promoteToEmailAccount(email, password)` vincula la credencial al usuario *actual*,
-            conservando el `uid`. Mapear `ERROR_EMAIL_ALREADY_IN_USE` a su propio mensaje accionable.
-      - [ ] **No-goal de v1:** cuando la dirección que el usuario escribe ya pertenece a otra cuenta,
-            **no** fusionar los dos árboles de datos. Decirle que esa cuenta ya existe y que inicie
-            sesión con ella.
-      - [ ] **Trampa de producto:** `signOut()` sobre una sesión **anónima** destruye el `uid` y con
-            él todos sus datos en Firestore, de forma irreversible. La UI debe confirmar antes de
-            cerrar sesión cuando el estado es `Anonymous`.
+            `awaitClose { removeAuthStateListener(listener) }`. Esto reemplaza el stub
+            `flowOf(AuthState.Unauthenticated)`, que **completaba** tras una sola emisión y por
+            tanto violaba el contrato de que `authState` nunca completa. El listener resuelve
+            **tres** estados — `Unauthenticated` / `Anonymous` / `Authenticated`.
+            *(Hecho. PR #2.)*
+      - [x] `signInAnonymously()` antes de cualquier lectura o escritura de Firestore. Ahora
+            corre en `RacionApplication.bootstrapAnonymousSession()`, y el orden contra
+            `initializeFirestoreIfReady` está documentado en `docs/INTEGRATION.md` §2.4.
+            *(Hecho.)*
+      - [x] `promoteToEmailAccount(email, password)` vincula la credencial al usuario *actual*,
+            conservando el `uid`. `ERROR_EMAIL_ALREADY_IN_USE` mapeado a su propio mensaje.
+            *(Hecho.)*
+      - [x] **No-goal de v1:** cuando la dirección escrita ya pertenece a otra cuenta, **no**
+            fusionar los dos árboles de datos. Se le dice que esa cuenta ya existe.
+            *(Hecho.)*
+      - [x] **Trampa de producto:** `signOut()` sobre una sesión **anónima** destruye el `uid` y
+            con él todos sus datos en Firestore. La UI confirma antes de cerrar sesión en estado
+            `Anonymous`. *(Hecho.)*
+      - [ ] **Bloqueante de release:** habilitar los providers en Firebase Console. Nunca se
+            verificó en runtime; el login con Google no se probó contra el backend real.
+            *(Ver J6 en `SPRINT-1.md`.)*
 - [ ] **FF-5.** Crear **Cloud Firestore** y escribir **reglas de seguridad deny-by-default**. Cada
       regla debe exigir `request.auth.uid == <el userId del path>`; no hay lectura pública ni
       escritura pública.
+      - [x] Proyecto de Firebase y app conectada: `RacionApplication` resuelve la instancia con
+            `initializeFirestoreIfReady`.
+      - [ ] **Reglas de seguridad.** El repo **no tiene `firestore.rules` ni `firebase.json`**.
+            La especificación está en `docs/INTEGRATION.md` §2.2 pero **no está aplicada**: la app
+            ya escribe a Firestore sin gobierno de reglas. Bloqueante de producción.
 - [ ] **FF-6.** Implementar los tres repositorios de Firestore contra el layout documentado. Con
       ROOM como source of truth local, su trabajo es la proyección remota + el sync:
       ```
@@ -169,15 +179,24 @@ una base local y le queda bien a una app de mercado con señal intermitente.
             `observeWeek`, `recentScans`), `pushAdd` escribiendo primero el subdocumento de la entrada
             y **después** `FieldValue.increment` sobre los totales del día, `pushDelete` con un
             decrement compensatorio.
-      - [ ] `FirestoreGoalsRepository`: snapshot sobre `users/{uid}/goals`, `set` al guardar.
-      - [ ] `FirestoreProfileRepository`: snapshot sobre `users/{uid}/profile`, y el flag de
+            **Sin empezar:** los tres métodos de escritura (`addEntry`, `deleteEntry`,
+            `recentScans`) tiran `NotImplementedError`.
+      - [x] `FirestoreGoalsRepository`: snapshot sobre `users/{uid}/goals`, `set` al guardar.
+            *(Hecho. PR #7.)*
+      - [x] `FirestoreProfileRepository`: snapshot sobre `users/{uid}/profile`, y el flag de
             onboarding en su propio subdocumento.
+            *(Hecho. PR #7.)*
       - [ ] Todo `Flow` debe emitir primero desde la caché local, nunca completar, y nunca tirar —
             un fallo de lectura es una emisión de estado vacío.
-- [ ] **FF-7.** Exponer los repositorios desde `AppContainer` y hacer que `MainActivity` lea el flag
-      de onboarding desde `ProfileRepository.observeOnboardingCompleted()` en vez de
-      `SharedPreferences`. La ruta inicial tiene que pasar a ser estado recolectado, no un `val`
-      calculado antes de `setContent`.
+            **Excepción documentada:** los observadores sin sesión emiten su fallback y
+            **completan**, porque sin sesión no hay nada que esperar. Documentado en el KDoc de
+            `FirestoreGoalsRepository` y `FirestoreProfileRepository`.
+- [x] **FF-7.** Exponer los repositorios desde `AppContainer`. *(Hecho. PR #8.)*
+      - [ ] …y hacer que `MainActivity` lea el flag de onboarding desde
+            `ProfileRepository.observeOnboardingCompleted()` en vez de `SharedPreferences`. La
+            interfaz **ya expone** `observeOnboardingCompleted()` y `completeOnboarding()`, pero
+            `MainActivity` sigue con `getSharedPreferences("ration_prefs")` y tiene el
+            `TODO(FF-5)` — lo que hace que ningún `init` de Firestore sea alcanzable hoy.
 
 ### 2.4 Sync en la nube (ROOM ↔ Firestore)
 

@@ -60,7 +60,7 @@ app/src/test/java/com/racion/diariomercado/data/openfood/    (directorio nuevo)
   Ver nota de alcance abajo.
 - [x] **T4 — Q-4: test de contrato MockWebServer.** Header `User-Agent` y `status = 0` →
   `NotFound`, **más el camino de éxito**, que faltaba en los criterios originales.
-- [ ] **T5 — documentación y cierre.**
+- [x] **T5 — documentación y cierre.** Ver `## Cierre` abajo.
 
 ### Nota de alcance: T3 se amplió a `toFoodProduct` / `toNutrition`
 
@@ -159,3 +159,52 @@ BUILD SUCCESSFUL
 
 T5 (documentación) y decisión del usuario sobre el trabajo no autorizado que el worker dejó
 en el árbol (Google Sign-In + identidad visual de login).
+
+## Cierre
+
+**Feature completa y verificada.**
+
+| Check | Resultado |
+|---|---|
+| `assembleDebug` | `BUILD SUCCESSFUL` |
+| `testDebugUnitTest` | **189 tests, 0 fallos** (baseline 150 + 6 de esta feature + 33 de Google Auth ya mergeados) |
+| T1 — OFF-1a Moshi codegen | ✅ `ksp(libs.squareup.moshi.kotlin.codegen)` cableado, `OpenFoodFactsDto` con `@JsonClass(generateAdapter = true)` |
+| T2 — OFF-1b `countries_tags` | ✅ campo en `OFF_FIELDS` + `OffProductDto` + round-trip test en `MoshiAdapterTest` |
+| T3 — OFF-2 `productByBarcode` + mapping | ✅ implementado con `toFoodProduct()` / `toNutrition()` + tests de éxito, sin `nutriments`, nombre no usable |
+| T4 — Q-4 contrato MockWebServer | ✅ 5 tests: éxito, status=0 → NotFound, 429/503 → RateLimited, red → Network, 404/500 → Server |
+
+**Aritmética de tests (sin crédito ajeno):**
+| Suite | HEAD (pre-feature) | Ahora | Delta | Autoría |
+|---|---|---|---|---|
+| `MoshiAdapterTest` | 7 | 8 | +1 | esta feature |
+| `OpenFoodFactsContractTest` | — | 5 | +5 | esta feature |
+| `LoginViewModelTest` | 11 | 19 | +8 | **fuera de alcance (Google Auth, mergeado por separado)** |
+| `ProfileViewModelTest` | 4 | 12 | +8 | **fuera de alcance (Google Auth, mergeado por separado)** |
+| `SessionDataReassignerTest` | — | 8 | +8 | **fuera de alcance (Google Auth, mergeado por separado)** |
+
+**Total actual: 189 tests.** Esta feature OpenFoodFacts aporta **6 tests** (+1 MoshiAdapterTest, +5 OpenFoodFactsContractTest).
+
+### Lo que NO se hizo (por diseño, no olvido)
+
+| Ítem | Por qué no está |
+|---|---|
+| `countries_tags` en dominio (`FoodProduct`) | Requiere schema v3 + migración + `FoodCatalogDao` — bloque separado |
+| Filtrado por país (Colombia) | Tag exacto no confirmado contra taxonomía oficial; no hardcodear |
+| `search` (OF-4) | `NotImplementedError` + sin throttling — bloque OF-4 |
+| Cableado `AppContainer` → `AppNavigation` (FF-6/BC-1/ST-1) | Owner distinto; `PreviewData.featuredProduct` sigue siendo el stub en escáner |
+| `nutritionUnknown` (OFF-5a) | Cero ambiguo entre "sin datos" y "0 kcal" — decisión pendiente v2 |
+
+### Archivos de la feature (lista de entrega)
+
+```
+gradle/libs.versions.toml                    (alias KSP Moshi codegen)
+app/build.gradle.kts                         (codegen aplicado)
+app/src/main/java/.../data/openfood/OpenFoodFactsService.kt
+app/src/main/java/.../data/openfood/OpenFoodFactsCatalogRepository.kt
+app/src/main/java/.../data/openfood/dto/OpenFoodFactsDto.kt
+app/src/test/java/.../data/openfood/MoshiAdapterTest.kt
+app/src/test/java/.../data/openfood/OpenFoodFactsContractTest.kt
+odd/tasks/openfoodfacts-integration.md       (este documento)
+```
+
+**Estado: ✅ COMPLETA.** Sin commits pendientes en esta feature (los cambios de Google Auth están en rama `Julian` y ya mergeados a `main` por separado).

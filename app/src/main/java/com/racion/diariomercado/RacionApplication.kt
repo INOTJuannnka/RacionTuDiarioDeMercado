@@ -3,6 +3,7 @@ package com.racion.diariomercado
 import android.app.Application
 import android.util.Log
 import com.google.firebase.FirebaseApp
+import com.google.firebase.firestore.FirebaseFirestore
 import com.racion.diariomercado.core.AppResult
 import com.racion.diariomercado.di.AppContainer
 import com.racion.diariomercado.domain.repository.AuthState
@@ -72,16 +73,55 @@ class RacionApplication : Application() {
 
         bootstrapAnonymousSession()
 
-        // TODO(FF-5): create the Firestore instance here and configure it ONCE.
-        //
-        // TRAP (FF-5): FirebaseFirestore.setFirestoreSettings() MUST run before ANY other call on
-        // that Firestore instance, including a snapshot listener or a get() — otherwise it throws
-        // IllegalStateException at runtime, not at compile time. That is why it belongs here and not
-        // lazily inside a repository. The anonymous sign-in above has to come first regardless,
-        // because the security rules are keyed on a currentUser that does not exist yet.
-        //
-        // Do NOT call the deprecated setPersistenceEnabled(): offline persistence is already ON by
-        // default through PersistentCacheSettings, and the old call is ignored on recent SDKs.
+        initializeFirestoreIfReady(firebaseApp)
+    }
+
+    /**
+     * Resolves the process-wide [FirebaseFirestore] instance at the one point where doing so is
+     * safe.
+     *
+     * ## Why this is eagerly resolved here, while the repositories resolve lazily
+     * Two ordering constraints pull in opposite directions and this method is where they meet.
+     *
+     * - `setFirestoreSettings()` must run before *any* other call on the instance, including a
+     *   snapshot listener, or it throws `IllegalStateException` at runtime rather than at compile
+     *   time. Touching Firestore before settings are applied is the trap this file documents.
+     * - But `bootstrapAnonymousSession()` has to come first regardless, because the security rules
+     *   are keyed on a `currentUser` that does not exist yet — the first Firestore read would
+     *   otherwise be denied and that permission error reads like a rules bug rather than a missing
+     *   sign-in.
+     *
+     * Instantiating here, immediately after both, makes "settings before first use" true by
+     * construction instead of by convention: no repository can reach an unconfigured instance,
+     * because the only instance exists by the time the UI runs.
+     *
+     * The repositories still call `getInstance()` lazily inside each method. That is not a second
+     * instance — Firebase owns the singleton — it is the same lesson [com.racion.diariomercado.data.firebase.FirebaseAuthRepository]
+     * already learned: the container must not depend on initialisation *ordering*. The eager call
+     * here fixes the ordering; the lazy call keeps the failure attached to the call that needs it.
+     *
+     * ## Why no `setFirestoreSettings(...)` call
+     * Nothing here needs a non-default setting. Offline persistence is already on through
+     * `PersistentCacheSettings`, and the deprecated `setPersistenceEnabled()` is ignored on recent
+     * SDKs, so calling it would be dead code that looks like configuration. If a real need appears
+     * — a smaller cache size, a different host — it belongs here, in this method, before the
+     * repositories ever resolve the instance. Do not add it anywhere else.
+     *
+     * ## Why a `null` `FirebaseApp` is not fatal
+     * `FirebaseApp.initializeApp` returning `null` means the generated resources are missing, and
+     * `getInstance()` would throw. That is already logged above and surfaces again through every
+     * `AppResult`, so throwing here would only replace a renderable message with a crash on
+     * startup.
+     */
+    private fun initializeFirestoreIfReady(firebaseApp: FirebaseApp?) {
+        if (firebaseApp == null) {
+            Log.e(TAG, "Skipping Firestore init: FirebaseApp is null. Every read will fail to map.")
+            return
+        }
+        runCatching { FirebaseFirestore.getInstance() }
+            .onFailure {
+                Log.e(TAG, "FirebaseFirestore.getInstance() failed at startup.", it)
+            }
     }
 
     /**

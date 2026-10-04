@@ -2,14 +2,19 @@ package com.racion.diariomercado.di
 
 import android.content.Context
 import androidx.room.Room
+import com.google.firebase.firestore.FirebaseFirestore
 import com.racion.diariomercado.BuildConfig
 import com.racion.diariomercado.data.firebase.FirebaseAuthRepository
+import com.racion.diariomercado.data.firebase.FirestoreGoalsRepository
+import com.racion.diariomercado.data.firebase.FirestoreProfileRepository
 import com.racion.diariomercado.data.local.LocalDiaryRepository
 import com.racion.diariomercado.data.local.RacionDatabase
 import com.racion.diariomercado.data.local.RoomSessionDataReassigner
 import com.racion.diariomercado.data.openfood.OpenFoodFactsService
 import com.racion.diariomercado.domain.repository.AuthRepository
 import com.racion.diariomercado.domain.repository.DiaryRepository
+import com.racion.diariomercado.domain.repository.GoalsRepository
+import com.racion.diariomercado.domain.repository.ProfileRepository
 import com.racion.diariomercado.domain.repository.SessionDataReassigner
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -225,21 +230,58 @@ class AppContainer(private val context: Context) {
         RoomSessionDataReassigner(rationDatabase)
     }
 
-    // TODO(OFF-4): expose the remaining repository interfaces once their implementations exist:
+    /**
+     * [GoalsRepository] backed by Cloud Firestore (FF-5).
+     *
+     * ## Why both repositories take lambdas and none of them take a handle
+     * The commented TODO that used to sit here read `FirestoreGoalsRepository(firestore)`. Passing
+     * the instance would move the ordering bug this file already documents one level up: the
+     * container would resolve `FirebaseFirestore.getInstance()` while the UI is building, which
+     * throws `IllegalStateException` when `FirebaseApp` is not ready yet.
+     *
+     * A provider defers that to the call that actually needs it, and it is the same shape
+     * [FirebaseAuthRepository] settled on after FF-2 and FF-3 — the note on [authRepository]
+     * explains why that prediction turned out to be wrong.
+     *
+     * ## Why `currentUid` goes through [authRepository] instead of reading Firebase Auth directly
+     * So there is exactly one place that answers "who is the current user". A repository reaching
+     * for `FirebaseAuth.getInstance()` on its own would be a second answer that could disagree with
+     * the first the moment the auth repository gained caching or an override.
+     *
+     * No session is not an error at construction time: both repositories resolve the uid per call
+     * and report "no session" as a value or a `Failure`, never as a thrown exception.
+     */
+    val goalsRepository: GoalsRepository by lazy {
+        FirestoreGoalsRepository(
+            firestore = { FirebaseFirestore.getInstance() },
+            currentUid = { authRepository.currentUid }
+        )
+    }
+
+    /**
+     * [ProfileRepository] backed by Cloud Firestore (FF-5).
+     *
+     * Same construction rationale as [goalsRepository]: providers instead of handles, and the uid
+     * read through [authRepository] so the session has a single owner.
+     */
+    val profileRepository: ProfileRepository by lazy {
+        FirestoreProfileRepository(
+            firestore = { FirebaseFirestore.getInstance() },
+            currentUid = { authRepository.currentUid }
+        )
+    }
+
+    // TODO(OFF-4): expose foodCatalogRepository once OpenFoodFactsCatalogRepository exists:
     //
     //   val foodCatalogRepository: FoodCatalogRepository by lazy {
     //       OpenFoodFactsCatalogRepository(openFoodFactsService)
     //   }
-    //   val goalsRepository: GoalsRepository by lazy { FirestoreGoalsRepository(firestore) }
-    //   val profileRepository: ProfileRepository by lazy { FirestoreProfileRepository(firestore) }
     //
-    // `diaryRepository` is no longer in this list: it is wired above, backed by ROOM.
+    // `diaryRepository`, `goalsRepository` and `profileRepository` are no longer in this list: all
+    // three are wired above.
     //
     // Screens must depend on the INTERFACES, never on the implementations above, so the
     // Open Food Facts / ROOM / Firestore choice stays replaceable.
-    //
-    // TODO(FF-4): `firestore` is FirebaseFirestore.getInstance() created after the
-    // setFirestoreSettings() call in RacionApplication.onCreate().
     //
     // TODO(ST-1): once ViewModels exist, scope the repositories to them (or to an explicit
     // application-scoped holder) instead of leaking them into the Activity.

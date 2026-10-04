@@ -5,6 +5,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -20,6 +21,7 @@ import com.racion.diariomercado.domain.model.DiaryEntry
 import com.racion.diariomercado.domain.model.FoodProduct
 import com.racion.diariomercado.domain.model.MealSlot
 import com.racion.diariomercado.domain.model.Nutrition
+import com.racion.diariomercado.domain.model.UserProfile
 import com.racion.diariomercado.domain.repository.AuthRepository
 import com.racion.diariomercado.domain.repository.SessionDataReassigner
 import com.racion.diariomercado.ui.components.NavDestination
@@ -39,6 +41,7 @@ import com.racion.diariomercado.ui.screens.auth.ProfileViewModel
 import com.racion.diariomercado.ui.screens.auth.RegisterScreen
 import com.racion.diariomercado.ui.screens.auth.rememberGoogleSignInLauncher
 import com.racion.diariomercado.ui.preview.PreviewData
+import kotlinx.coroutines.launch
 
 /** Rutas de navegación de la app como strings simples. */
 object Routes {
@@ -136,6 +139,12 @@ fun AppNavigation(
     val navController = rememberNavController()
     val navResult = remember { NavResult() }
 
+    // FF-5: the scope that carries the goals and profile writes launched from the screens below.
+    // It is tied to the composition, so a write in flight is cancelled if the graph goes away —
+    // which is the honest behaviour here, because there is no outbox for these two writes yet and
+    // the objects they carry are still held by the screens that produced them.
+    val scope = rememberCoroutineScope()
+
     fun selectTab(dest: NavDestination) {
         val route = dest.tabRoute() ?: return
         navController.navigate(route) {
@@ -190,8 +199,19 @@ fun AppNavigation(
             )
         }
         composable(Routes.PERFIL) {
+            val container = rememberAppContainer()
             MetasScreen(
-                onSave = { _ ->
+                onSave = { goals ->
+                    // FF-5: the write is launched and the screen moves on immediately, on purpose.
+                    // Blocking the navigation on a network round trip would hold the user on this
+                    // screen while the radio comes up, and the goals are already in the local
+                    // object the screen loaded from — nothing is lost if this is slow.
+                    //
+                    // The failure is not reported yet, and that is a real gap rather than an
+                    // oversight: there is no snackbar seam in this graph to report it through, and
+                    // inventing one is FF-7's block. Until then a dropped write is invisible, which
+                    // is why this comment marks the exact place the seam has to land.
+                    scope.launch { container.goalsRepository.saveGoals(goals) }
                     navController.navigate(Routes.INICIO) {
                         popUpTo(navController.graph.findStartDestination().id)
                         launchSingleTop = true
@@ -233,8 +253,32 @@ fun AppNavigation(
             InformeScreen(onNavigate = ::selectTab)
         }
         composable(Routes.PERFIL_DEPORTIVO) {
+            val container = rememberAppContainer()
             PerfilDeportivoScreen(
-                onContinue = { _ ->
+                onContinue = { focus ->
+                    // FF-5: same fire-and-forget shape as the goals save above, and the same
+                    // unreported-failure gap — see the note there before adding a second copy of
+                    // the workaround.
+                    //
+                    // `userId` is read from the session so it is not a placeholder, but
+                    // FirestoreProfileRepository ignores it on write: the document path is the
+                    // authoritative identity and the field is never stored (see
+                    // UserProfile.toProfileDocument). Passing a real value here keeps the object
+                    // honest for anything that reads it before the write lands.
+                    scope.launch {
+                        container.profileRepository.saveProfile(
+                            UserProfile(
+                                userId = container.authRepository.currentUid.orEmpty(),
+                                displayName = "",
+                                sportFocus = focus,
+                                // The screen collects no weight, so the domain default stands.
+                                // A later screen owns this field and will own its own value.
+                                // The id here is the placeholder the domain requires and nothing
+                                // reads: the write derives the real one from the document path.
+                                currentWeightKg = UserProfile(userId = "").currentWeightKg
+                            )
+                        )
+                    }
                     navController.navigate(Routes.PERFIL)
                 },
                 onNavigate = ::selectTab

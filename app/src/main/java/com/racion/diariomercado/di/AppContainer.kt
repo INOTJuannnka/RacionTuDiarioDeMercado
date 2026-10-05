@@ -10,9 +10,11 @@ import com.racion.diariomercado.data.firebase.FirestoreProfileRepository
 import com.racion.diariomercado.data.local.LocalDiaryRepository
 import com.racion.diariomercado.data.local.RacionDatabase
 import com.racion.diariomercado.data.local.RoomSessionDataReassigner
+import com.racion.diariomercado.data.openfood.OpenFoodFactsCatalogRepository
 import com.racion.diariomercado.data.openfood.OpenFoodFactsService
 import com.racion.diariomercado.domain.repository.AuthRepository
 import com.racion.diariomercado.domain.repository.DiaryRepository
+import com.racion.diariomercado.domain.repository.FoodCatalogRepository
 import com.racion.diariomercado.domain.repository.GoalsRepository
 import com.racion.diariomercado.domain.repository.ProfileRepository
 import com.racion.diariomercado.domain.repository.SessionDataReassigner
@@ -113,6 +115,11 @@ class AppContainer(private val context: Context) {
     /** Retrofit-generated implementation of the OFF endpoints. */
     val openFoodFactsService: OpenFoodFactsService by lazy {
         retrofit.create(OpenFoodFactsService::class.java)
+    }
+
+    /** [FoodCatalogRepository] backed by Open Food Facts (OFF-3). */
+    val openFoodFactsCatalogRepository: FoodCatalogRepository by lazy {
+        OpenFoodFactsCatalogRepository(openFoodFactsService)
     }
 
     /**
@@ -271,12 +278,6 @@ class AppContainer(private val context: Context) {
         )
     }
 
-    // TODO(OFF-4): expose foodCatalogRepository once OpenFoodFactsCatalogRepository exists:
-    //
-    //   val foodCatalogRepository: FoodCatalogRepository by lazy {
-    //       OpenFoodFactsCatalogRepository(openFoodFactsService)
-    //   }
-    //
     // `diaryRepository`, `goalsRepository` and `profileRepository` are no longer in this list: all
     // three are wired above.
     //

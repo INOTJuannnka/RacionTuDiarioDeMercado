@@ -12,6 +12,8 @@ navigationCompose = "2.9.8"
 splashscreen = "1.0.1"
 lifecycle = "2.8.7"
 retrofit = "3.0.0"
+accompanist = "0.32.0"
+camerax = "1.4.0"
 # NOTE: the requested `okhttp = "5.1.0"` does not exist on Maven Central. The newest
 # published releases are 4.12.0 (stable) and 5.0.0-alpha.16 (pre-release). 4.12.0 is
 # also the exact version Retrofit 3.0.0 depends on, so it is the consistent choice.
@@ -100,6 +102,15 @@ firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics
 
 # Barcode scanning
 play-services-mlkit-barcode-scanning = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcodeScanning" }
+
+# Accompanist permissions for runtime permission handling (BC-1)
+accompanist-permissions = { group = "com.google.accompanist", name = "accompanist-permissions", version.ref = "accompanist" }
+
+# CameraX for barcode scanning (BC-1)
+androidx-camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
+androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
+androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
+androidx-camera-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
 
 # Room. These DO carry a version, unlike the Compose entries above: the Compose BOM does not
 # constrain androidx.room (verified against its POM), and a versionless Room entry fails

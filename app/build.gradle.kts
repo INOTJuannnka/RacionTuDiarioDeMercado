@@ -69,12 +69,12 @@ android {
             // risk an IP ban you have no way to trace back. Better: read it from a gitignored
             // `local.properties` entry so the address never lands in version control.
             buildConfigField("String", "OPEN_FOOD_FACTS_BASE_URL", "\"https://world.openfoodfacts.org/\"")
-            buildConfigField("String", "OPEN_FOOD_FACTS_USER_AGENT", "\"RacionTuDiarioDeMercado/${defaultConfig.versionName} (contact@example.com)\"")
+            buildConfigField("String", "OPEN_FOOD_FACTS_USER_AGENT", "\"RacionTuDiarioDeMercado/${defaultConfig.versionName} (jucarvajal2000@gmail.com)\"")
         }
         release {
             // MANDATORY (OFF-1): same two fields, release flavour. Same placeholder caveat.
             buildConfigField("String", "OPEN_FOOD_FACTS_BASE_URL", "\"https://world.openfoodfacts.org/\"")
-            buildConfigField("String", "OPEN_FOOD_FACTS_USER_AGENT", "\"RacionTuDiarioDeMercado/${defaultConfig.versionName} (contact@example.com)\"")
+            buildConfigField("String", "OPEN_FOOD_FACTS_USER_AGENT", "\"RacionTuDiarioDeMercado/${defaultConfig.versionName} (jucarvajal2000@gmail.com)\"")
             optimization {
                 enable = false
             }
@@ -150,6 +150,15 @@ dependencies {
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+
+    // Accompanist permissions for runtime permission handling (BC-1)
+    implementation(libs.accompanist.permissions)
+
+    // CameraX for barcode scanning (BC-1)
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
 
     // Networking / serialization (OFF-1..OFF-4)
     implementation(libs.squareup.retrofit)

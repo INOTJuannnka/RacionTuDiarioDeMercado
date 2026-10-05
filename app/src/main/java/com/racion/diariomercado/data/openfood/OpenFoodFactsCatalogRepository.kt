@@ -66,6 +66,7 @@ internal class OpenFoodFactsCatalogRepository(
             }
         } catch (e: HttpException) {
             when (val code = e.code()) {
+                403 -> AppResult.Failure(AppError.Server(code, "User-Agent rechazado. Configurá un email real en local.properties (openfoodfacts.contact.email) o build.gradle.kts."))
                 429, 503 -> AppResult.Failure(AppError.RateLimited)
                 else -> AppResult.Failure(AppError.Server(code, e.message()))
             }
@@ -79,19 +80,37 @@ internal class OpenFoodFactsCatalogRepository(
     }
 
     /**
-     * TODO(OFF-3): call [OpenFoodFactsService.searchV1] (v2 has no free text), map each
-     * [OffProductDto] with [toFoodProduct], drop entries without a usable name, and cap the
-     * result at [pageSize]. Also enforce OFF-4: this must only ever be reached from an
-     * explicit submit or a debounced query, never per keystroke.
+     * Free-text search via the legacy v1 CGI endpoint (v2 has no free text — OFF-3).
+     *
+     * Maps each [OffProductDto] with [toFoodProduct], drops entries without a usable name,
+     * and caps the result at [pageSize]. Errors are mapped to [AppError] per the contract.
      */
     override suspend fun search(query: String, page: Int, pageSize: Int): AppResult<List<FoodProduct>> =
-        // TODO(OFF-3): implement. Note this throws NotImplementedError (an Error, NOT an Exception):
-        // the documented "no method may throw" contract applies to REAL implementations, and callers
-        // writing `catch (e: Exception)` will not catch this stub. Remove this method body entirely
-        // when the implementation lands.
-        throw NotImplementedError(
-            "FoodCatalogRepository.search is not implemented yet (OFF-3)"
-        )
+        try {
+            val trimmed = query.trim()
+            if (trimmed.isEmpty()) {
+                AppResult.Success(emptyList())
+            } else {
+                val response = service.searchV1(terms = trimmed, page = page, pageSize = pageSize)
+                val products = response.products ?: emptyList()
+                val mapped = products
+                    .map { it.toFoodProduct() }
+                    .filterNotNull()
+                AppResult.Success(mapped)
+            }
+        } catch (e: HttpException) {
+            when (val code = e.code()) {
+                403 -> AppResult.Failure(AppError.Server(code, "User-Agent rechazado. Configurá un email real en local.properties (openfoodfacts.contact.email) o build.gradle.kts."))
+                429, 503 -> AppResult.Failure(AppError.RateLimited)
+                else -> AppResult.Failure(AppError.Server(code, e.message()))
+            }
+        } catch (e: UnknownHostException) {
+            AppResult.Failure(AppError.Network)
+        } catch (e: SocketTimeoutException) {
+            AppResult.Failure(AppError.Network)
+        } catch (e: Throwable) {
+            AppResult.Failure(AppError.Unknown(e))
+        }
 
     /**
      * DTO -> domain mapping.

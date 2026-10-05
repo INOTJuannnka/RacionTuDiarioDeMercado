@@ -4,11 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.outlined.List
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.*
@@ -16,8 +17,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.racion.diariomercado.domain.model.FoodProduct
 import com.racion.diariomercado.ui.components.*
 import com.racion.diariomercado.ui.preview.PreviewData
@@ -34,13 +37,12 @@ import kotlin.math.roundToInt
  */
 @Composable
 fun AgregarScreen(
-    results: List<FoodProduct> = PreviewData.searchResults,
-    categories: List<String> = PreviewData.categories,
+    viewModel: AgregarViewModel,
     onFoodClick: (FoodProduct) -> Unit = {},
     onNavigate: (NavDestination) -> Unit = {}
 ) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf(categories.firstOrNull().orEmpty()) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
@@ -67,22 +69,33 @@ fun AgregarScreen(
                     Icon(Icons.Outlined.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 },
                 trailingIcon = {
-                    Box(
-                        Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.inverseSurface),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Outlined.List,
-                            contentDescription = "Filtros",
-                            tint = MaterialTheme.colorScheme.inverseOnSurface
-                        )
+                    if (query.isNotBlank()) {
+                        IconButton(onClick = { query = ""; viewModel.onClearQuery() }) {
+                            Icon(
+                                Icons.Filled.Clear,
+                                contentDescription = "Limpiar búsqueda",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        Box(
+                            Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.inverseSurface),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Outlined.List,
+                                contentDescription = "Filtros",
+                                tint = MaterialTheme.colorScheme.inverseOnSurface
+                            )
+                        }
                     }
                 },
                 singleLine = true,
                 shape = MaterialTheme.shapes.large,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                     unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
@@ -119,21 +132,70 @@ fun AgregarScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(categories) { cat ->
-                    PillTab(
-                        text = cat,
-                        selected = cat == selectedCategory,
-                        onClick = { selectedCategory = cat }
-                    )
-                }
-            }
+            // Search button - explicit submit to respect OFF rate limits (OFF-4)
+            PrimaryButton(
+                text = "Buscar",
+                onClick = { viewModel.onSearch(query) },
+                enabled = query.isNotBlank()
+            )
 
             Spacer(Modifier.height(16.dp))
 
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                items(results) { food ->
-                    FoodResultRow(food = food, onClick = { onFoodClick(food) })
+            val currentState = uiState
+            when (currentState) {
+                is AgregarUiState.Idle -> {
+                    Text(
+                        "Escribí un alimento y tocá \"Buscar\"",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                is AgregarUiState.Searching -> {
+                    Column(
+                        Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(32.dp)
+                        )
+                        Text(
+                            "Buscando...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                is AgregarUiState.Results -> {
+                    if (currentState.products.isEmpty()) {
+                        Text(
+                            "No se encontraron resultados para \"$query\"",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            items(currentState.products) { food ->
+                                FoodResultRow(food = food, onClick = { onFoodClick(food) })
+                            }
+                        }
+                    }
+                }
+                is AgregarUiState.Error -> {
+                    Column(
+                        Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            currentState.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = { viewModel.onSearch(query) }) {
+                            Text("Reintentar")
+                        }
+                    }
                 }
             }
         }

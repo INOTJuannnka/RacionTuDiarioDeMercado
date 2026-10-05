@@ -12,6 +12,10 @@ import com.racion.diariomercado.data.local.RacionDatabase
 import com.racion.diariomercado.data.local.RoomSessionDataReassigner
 import com.racion.diariomercado.data.openfood.OpenFoodFactsCatalogRepository
 import com.racion.diariomercado.data.openfood.OpenFoodFactsService
+import com.racion.diariomercado.data.sync.DiarySyncManager
+import com.racion.diariomercado.data.sync.FirestoreOperations
+import com.racion.diariomercado.data.sync.FirestoreSyncTransport
+import com.racion.diariomercado.data.sync.SyncTransport
 import com.racion.diariomercado.domain.repository.AuthRepository
 import com.racion.diariomercado.domain.repository.DiaryRepository
 import com.racion.diariomercado.domain.repository.FoodCatalogRepository
@@ -215,6 +219,27 @@ class AppContainer(private val context: Context) {
             syncOutboxDao = rationDatabase.syncOutboxDao(),
             database = rationDatabase,
             userId = LocalDiaryRepository.LOCAL_USER_ID
+        )
+    }
+
+    /**
+     * [SyncTransport] backed by Cloud Firestore.
+     */
+    val syncTransport: SyncTransport by lazy {
+        FirestoreSyncTransport(
+            operations = FirestoreOperations.create { FirebaseFirestore.getInstance() },
+            currentUid = { authRepository.currentUid }
+        )
+    }
+
+    /**
+     * [DiarySyncManager] drains the local outbox to Firestore.
+     * Called after local writes and on app resume.
+     */
+    val diarySyncManager: DiarySyncManager by lazy {
+        DiarySyncManager(
+            outboxDao = rationDatabase.syncOutboxDao(),
+            transport = syncTransport
         )
     }
 

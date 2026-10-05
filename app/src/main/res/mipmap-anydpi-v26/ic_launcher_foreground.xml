@@ -1,0 +1,25 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="190"
+    android:viewportHeight="190">
+    <!-- Círculo naranja (base) -->
+    <path
+        android:pathData="M 95 22 A 73 73 0 1 1 94.999 22"
+        android:fillColor="#E65A22" />
+    <!-- Anillo exterior (sólido, más fino) -->
+    <path
+        android:pathData="M 95 5 A 90 90 0 1 1 94.999 5"
+        android:strokeColor="#2A211C"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="butt"
+        android:fillColor="@android:color/transparent" />
+    <!-- Hoja -->
+    <path
+        android:pathData="M 95 50 C 78 68, 66 82, 66 100 C 66 117, 79 129, 95 129 C 111 129, 124 117, 124 100 C 124 82, 112 68, 95 50 Z"
+        android:fillColor="#F8EDE1" />
+    <!-- Tallo -->
+    <path
+        android:pathData="M 92.5 120 L 97.5 120 L 97.5 148 L 92.5 148 Z"
+        android:fillColor="#F8EDE1" />
+</vector>

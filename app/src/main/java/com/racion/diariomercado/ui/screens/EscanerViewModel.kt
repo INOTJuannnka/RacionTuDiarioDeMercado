@@ -53,18 +53,8 @@ class EscanerViewModel(
     private var isScanning = false
 
     init {
-        checkPermissionAndStart()
-    }
-
-    /**
-     * Checks camera permission and starts scanning if granted, or emits PermissionDenied.
-     */
-    private fun checkPermissionAndStart() {
-        viewModelScope.launch(ioDispatcher) {
-            // In a real implementation, we'd use ActivityCompat.checkSelfPermission
-            // For now, we assume permission handling is done by the screen via Accompanist
-            // and this ViewModel just receives the result via onPermissionResult()
-        }
+        // Permission handling is done by the screen via Accompanist rememberPermissionState.
+        // The screen calls onPermissionResult() when permission status changes.
     }
 
     /**
@@ -121,10 +111,13 @@ class EscanerViewModel(
 
     /**
      * User tapped "Reintentar" after an error - go back to scanning.
+     *
+     * Since the user was already scanning (permission already granted), we go directly
+     * to Scanning instead of re-checking permission. The screen's Accompanist permission
+     * state is already Granted, so the CameraPreview will rebind automatically.
      */
     fun onRetry() {
-        _uiState.value = EscanerUiState.CheckingPermission
-        checkPermissionAndStart()
+        _uiState.value = EscanerUiState.Scanning
     }
 
     /**

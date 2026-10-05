@@ -26,6 +26,7 @@ import com.racion.diariomercado.domain.repository.AuthRepository
 import com.racion.diariomercado.domain.repository.AuthState
 import com.racion.diariomercado.domain.repository.SessionDataReassigner
 import com.racion.diariomercado.ui.components.NavDestination
+import com.racion.diariomercado.core.AppResult
 import com.racion.diariomercado.ui.screens.AgregarScreen
 import com.racion.diariomercado.ui.screens.AgregarViewModel
 import com.racion.diariomercado.ui.screens.AvisoScreen
@@ -34,6 +35,7 @@ import com.racion.diariomercado.ui.screens.EscanerScreen
 import com.racion.diariomercado.ui.screens.EscanerViewModel
 import com.racion.diariomercado.ui.screens.InformeScreen
 import com.racion.diariomercado.ui.screens.InicioScreen
+import com.racion.diariomercado.ui.screens.InicioViewModel
 import com.racion.diariomercado.ui.screens.MetasScreen
 import com.racion.diariomercado.ui.screens.PerfilDeportivoScreen
 import com.racion.diariomercado.ui.screens.auth.GoogleSignInOutcome
@@ -110,11 +112,16 @@ fun AppNavigation(
 
     NavHost(navController = navController, startDestination = startRoute) {
         composable(Routes.INICIO) {
-            val merged = (PreviewData.meals + navResult.confirmedEntries)
-                .sortedBy { it.loggedAtEpochMillis }
+            val container = rememberAppContainer()
+            val viewModel: InicioViewModel = viewModel(
+                factory = viewModelFactory {
+                    initializer {
+                        InicioViewModel(container.diaryRepository)
+                    }
+                }
+            )
             InicioScreen(
-                meals = merged,
-                consumed = merged.fold(Nutrition()) { acc, entry -> acc + entry.totalNutrition },
+                viewModel = viewModel,
                 onAddMeal = { navController.navigate(Routes.AGREGAR) },
                 onOpenReport = { navController.navigate(Routes.INFORME) },
                 onNavigate = ::selectTab
@@ -198,21 +205,30 @@ fun AppNavigation(
             )
         }
         composable(Routes.CONFIRMAR) {
+            val container = rememberAppContainer()
             val product = navResult.pendingProduct ?: PreviewData.featuredProduct
             ConfirmarScreen(
                 product = product,
                 mealSlots = listOf(MealSlot.DESAYUNO, MealSlot.ALMUERZO, MealSlot.SNACK),
                 onAddToDiary = { units, mealSlot ->
-                    navResult.addConfirmedEntry(
-                        DiaryEntry(
-                            id = "local-${System.currentTimeMillis()}",
-                            product = product,
-                            servings = units,
-                            mealSlot = mealSlot,
-                            loggedAtEpochMillis = System.currentTimeMillis(),
-                            totalNutrition = product.nutritionForUnits(units)
-                        )
+                    val entry = DiaryEntry(
+                        id = "local-${System.currentTimeMillis()}",
+                        product = product,
+                        servings = units,
+                        mealSlot = mealSlot,
+                        loggedAtEpochMillis = System.currentTimeMillis(),
+                        totalNutrition = product.nutritionForUnits(units)
                     )
+                    // Persist to diary repository (Room + sync outbox)
+                    scope.launch {
+                        val result = container.diaryRepository.addEntry(entry)
+                        // Trigger sync to Firestore after successful local write
+                        if (result is AppResult.Success) {
+                            container.diarySyncManager.drain()
+                        }
+                    }
+                    // Also keep local list for immediate UI feedback
+                    navResult.addConfirmedEntry(entry)
                     navController.navigate(Routes.INICIO) {
                         popUpTo(navController.graph.findStartDestination().id)
                         launchSingleTop = true

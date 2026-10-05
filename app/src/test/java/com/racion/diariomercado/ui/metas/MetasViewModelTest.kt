@@ -156,7 +156,7 @@ class MetasViewModelTest {
         viewModel.onWeightChanged(70f)
         viewModel.onKcalChanged(2100)
         viewModel.onActiveDaysChanged(setOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY))
-        viewModel.onSave()
+        viewModel.onSave(viewModel.uiState.value as MetasUiState.Content).goals
 
         advanceUntilIdle()
 
@@ -177,7 +177,7 @@ class MetasViewModelTest {
 
         advanceUntilIdle()
 
-        viewModel.onSave()
+        viewModel.onSave((viewModel.uiState.value as MetasUiState.Content).goals)
         advanceUntilIdle()
 
         val state = viewModel.uiState.value
@@ -196,13 +196,13 @@ class MetasViewModelTest {
         val viewModel = MetasViewModel(repository, authRepository)
 
         advanceUntilIdle()
-        viewModel.onSave()
+        viewModel.onSave((viewModel.uiState.value as MetasUiState.Content).goals)
         advanceUntilIdle()
         assertNotNull((viewModel.uiState.value as MetasUiState.Content).errorMessage)
 
         // Now the save succeeds.
         repository.failingSaveWith(null) // clear failure
-        viewModel.onSave()
+        viewModel.onSave((viewModel.uiState.value as MetasUiState.Content).goals)
         advanceUntilIdle()
 
         assertNull((viewModel.uiState.value as MetasUiState.Content).errorMessage)
@@ -218,7 +218,7 @@ class MetasViewModelTest {
 
         advanceUntilIdle()
         viewModel.onWeightChanged(75f)
-        viewModel.onSave()
+        viewModel.onSave((viewModel.uiState.value as MetasUiState.Content).goals)
         advanceUntilIdle()
 
         // The goals in the UI state still reflect the local edit (75f),
@@ -236,11 +236,11 @@ class MetasViewModelTest {
         advanceUntilIdle()
 
         viewModel.onWeightChanged(70f)
-        viewModel.onSave()
+        viewModel.onSave((viewModel.uiState.value as MetasUiState.Content).goals)
         advanceUntilIdle()
 
         viewModel.onWeightChanged(72f)
-        viewModel.onSave()
+        viewModel.onSave((viewModel.uiState.value as MetasUiState.Content).goals)
         advanceUntilIdle()
 
         assertEquals(2, repository.saveCalls)

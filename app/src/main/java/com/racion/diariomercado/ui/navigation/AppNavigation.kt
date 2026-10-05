@@ -38,6 +38,8 @@ import com.racion.diariomercado.ui.screens.auth.GoogleSignInOutcome
 import com.racion.diariomercado.ui.screens.auth.LoginScreen
 import com.racion.diariomercado.ui.screens.auth.LoginViewModel
 import com.racion.diariomercado.ui.screens.auth.ProfileScreen
+import com.racion.diariomercado.ui.metas.MetasViewModel
+import com.racion.diariomercado.ui.metas.MetasUiState
 import com.racion.diariomercado.ui.screens.auth.ProfileViewModel
 import com.racion.diariomercado.ui.screens.auth.RegisterScreen
 import com.racion.diariomercado.ui.screens.auth.rememberGoogleSignInLauncher
@@ -201,24 +203,37 @@ fun AppNavigation(
         }
         composable(Routes.PERFIL) {
             val container = rememberAppContainer()
+            val viewModel: MetasViewModel = viewModel(
+                factory = viewModelFactory {
+                    initializer {
+                        MetasViewModel(container.goalsRepository, container.authRepository)
+                    }
+                }
+            )
+            val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+            val currentState = uiState
+            val goals = when (currentState) {
+                is MetasUiState.Loading -> PreviewData.goals
+                is MetasUiState.Content -> currentState.goals
+            }
+            val canSave = when (currentState) {
+                is MetasUiState.Loading -> false
+                is MetasUiState.Content -> currentState.canSave
+            }
+            val errorMessage = when (currentState) {
+                is MetasUiState.Loading -> null
+                is MetasUiState.Content -> currentState.errorMessage
+            }
             val authState by container.authRepository.authState.collectAsStateWithLifecycle(
                 initialValue = AuthState.Unauthenticated
             )
+
             MetasScreen(
+                goals = goals,
                 onSave = { goals ->
-                    // FF-5: the write is launched and the screen moves on immediately, on purpose.
-                    // Blocking the navigation on a network round trip would hold the user on this
-                    // screen while the radio comes up, and the goals are already in the local
-                    // object the screen loaded from — nothing is lost if this is slow.
-                    //
-                    // The failure is not reported yet, and that is a real gap rather than an
-                    // oversight: there is no snackbar seam in this graph to report it through, and
-                    // inventing one is FF-7's block. Until then a dropped write is invisible, which
-                    // is why this comment marks the exact place the seam has to land.
-                    scope.launch { container.goalsRepository.saveGoals(goals) }
-                    navController.navigate(Routes.INICIO) {
-                        popUpTo(navController.graph.findStartDestination().id)
-                        launchSingleTop = true
+                    if (canSave) {
+                        scope.launch { viewModel.onSave(goals) }
                     }
                 },
                 authState = authState,
@@ -362,10 +377,12 @@ composable(Routes.LOGIN) {
             // The success branch pops the auth flow off the back stack rather than pushing
             // INICIO on top of it: otherwise the back gesture from "Inicio" would return to the
             // login form the user just completed.
+            // popUpTo(startDestination) inclusive=true clears the ENTIRE back stack (including
+            // CUENTA/PERFIL) so the user lands on a fresh INICIO, not on a stale CUENTA screen.
             LaunchedEffect(state.isLoggedIn) {
                 if (state.isLoggedIn) {
                     navController.navigate(Routes.INICIO) {
-                        popUpTo(Routes.LOGIN) { inclusive = true }
+                        popUpTo(navController.graph.findStartDestination().id) { inclusive = true }
                         launchSingleTop = true
                     }
                 }
@@ -404,7 +421,7 @@ composable(Routes.REGISTRO) {
             LaunchedEffect(state.isLoggedIn) {
                 if (state.isLoggedIn) {
                     navController.navigate(Routes.INICIO) {
-                        popUpTo(Routes.REGISTRO) { inclusive = true }
+                        popUpTo(navController.graph.findStartDestination().id) { inclusive = true }
                         launchSingleTop = true
                     }
                 }

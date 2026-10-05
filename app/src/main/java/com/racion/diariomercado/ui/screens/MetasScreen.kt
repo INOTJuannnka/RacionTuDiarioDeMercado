@@ -14,10 +14,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.racion.diariomercado.domain.model.DayOfWeek
+import com.racion.diariomercado.domain.model.MacroSplit
 import com.racion.diariomercado.domain.model.NutritionGoals
 import com.racion.diariomercado.domain.repository.AuthState
 import com.racion.diariomercado.ui.components.*
 import com.racion.diariomercado.ui.preview.PreviewData
+import kotlin.math.roundToInt
 
 /**
  * Pantalla 06 · Metas - Control de objetivos: peso objetivo, meta calórica
@@ -45,8 +47,7 @@ fun MetasScreen(
     var weight by remember(goals) { mutableStateOf(goals.targetWeightKg) }
     var kcal by remember(goals) { mutableStateOf(goals.kcalPerDay.toFloat()) }
     var days by remember(goals) { mutableStateOf(goals.activeDays) }
-
-    val macroSplit = goals.macroSplit
+    var macroSplit by remember(goals) { mutableStateOf(goals.macroSplit) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
@@ -120,29 +121,32 @@ fun MetasScreen(
 
             SectionLabel("DISTRIBUCIÓN DE MACROS")
             Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                MacroPercentCard(
-                    "${macroSplit.carbsPct}%",
-                    "CARBOS",
-                    MaterialTheme.colorScheme.primaryContainer,
-                    MaterialTheme.colorScheme.primary,
-                    Modifier.weight(1f)
-                )
-                MacroPercentCard(
-                    "${macroSplit.proteinPct}%",
-                    "PROTEÍNA",
-                    MaterialTheme.colorScheme.secondaryContainer,
-                    MaterialTheme.colorScheme.secondary,
-                    Modifier.weight(1f)
-                )
-                MacroPercentCard(
-                    "${macroSplit.fatPct}%",
-                    "GRASAS",
-                    MaterialTheme.colorScheme.tertiaryContainer,
-                    MaterialTheme.colorScheme.tertiary,
-                    Modifier.weight(1f)
-                )
-            }
+            MacroSliderBlock(
+                label = "CARBOS",
+                value = macroSplit.carbsPct,
+                color = MaterialTheme.colorScheme.primary,
+                onValueChange = { newCarbs ->
+                    macroSplit = redistributeMacros(macroSplit.copy(carbsPct = newCarbs), MacroType.Carbs)
+                }
+            )
+            Spacer(Modifier.height(12.dp))
+            MacroSliderBlock(
+                label = "PROTEÍNA",
+                value = macroSplit.proteinPct,
+                color = MaterialTheme.colorScheme.secondary,
+                onValueChange = { newProtein ->
+                    macroSplit = redistributeMacros(macroSplit.copy(proteinPct = newProtein), MacroType.Protein)
+                }
+            )
+            Spacer(Modifier.height(12.dp))
+            MacroSliderBlock(
+                label = "GRASAS",
+                value = macroSplit.fatPct,
+                color = MaterialTheme.colorScheme.tertiary,
+                onValueChange = { newFat ->
+                    macroSplit = redistributeMacros(macroSplit.copy(fatPct = newFat), MacroType.Fat)
+                }
+            )
 
             Spacer(Modifier.height(28.dp))
 
@@ -153,7 +157,8 @@ fun MetasScreen(
                         goals.copy(
                             targetWeightKg = weight,
                             kcalPerDay = kcal.toInt(),
-                            activeDays = days
+                            activeDays = days,
+                            macroSplit = macroSplit
                         )
                     )
                 }
@@ -269,22 +274,86 @@ private fun GoalSliderBlock(
 }
 
 @Composable
-private fun MacroPercentCard(
-    value: String,
+private fun MacroSliderBlock(
     label: String,
-    bg: Color,
-    fg: Color,
+    value: Int,
+    color: Color,
+    onValueChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(
-        modifier = modifier
-            .clip(MaterialTheme.shapes.large)
-            .background(bg)
-            .padding(vertical = 16.dp, horizontal = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(value, style = MaterialTheme.typography.headlineMedium, color = fg)
-        Spacer(Modifier.height(4.dp))
-        Text(label, style = MaterialTheme.typography.labelSmall, color = fg)
+    Column(modifier = modifier) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            SectionLabel(label)
+            Text(
+                "$value%",
+                style = MaterialTheme.typography.titleLarge,
+                color = color
+            )
+        }
+        Slider(
+            value = value.toFloat(),
+            onValueChange = { onValueChange(it.roundToInt()) },
+            valueRange = 0f..100f,
+            steps = 100,
+            colors = SliderDefaults.colors(
+                thumbColor = color,
+                activeTrackColor = color,
+                inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
+            )
+        )
     }
+}
+
+/**
+ * Which macro the user is actively dragging. Used to redistribute the other two proportionally.
+ */
+private enum class MacroType { Carbs, Protein, Fat }
+
+/**
+ * Redistributes the two non-dragged macros proportionally so the total always equals 100%.
+ *
+ * Example: user sets Carbs to 60 (was 45). Remaining 40% is split between Protein/Fat
+ * keeping their current ratio (25:30 → 18:22).
+ */
+private fun redistributeMacros(updated: MacroSplit, changed: MacroType): MacroSplit {
+    val (fixedCarbs, fixedProtein, fixedFat) = when (changed) {
+        MacroType.Carbs -> {
+            val remaining = 100 - updated.carbsPct
+            val totalOther = updated.proteinPct + updated.fatPct
+            if (totalOther == 0) {
+                // Edge case: both others are 0, split evenly
+                Triple(updated.carbsPct, remaining / 2, remaining - remaining / 2)
+            } else {
+                val newProtein = (remaining * updated.proteinPct / totalOther).coerceAtMost(remaining)
+                val newFat = remaining - newProtein
+                Triple(updated.carbsPct, newProtein, newFat)
+            }
+        }
+        MacroType.Protein -> {
+            val remaining = 100 - updated.proteinPct
+            val totalOther = updated.carbsPct + updated.fatPct
+            if (totalOther == 0) {
+                Triple(remaining / 2, updated.proteinPct, remaining - remaining / 2)
+            } else {
+                val newCarbs = (remaining * updated.carbsPct / totalOther).coerceAtMost(remaining)
+                val newFat = remaining - newCarbs
+                Triple(newCarbs, updated.proteinPct, newFat)
+            }
+        }
+        MacroType.Fat -> {
+            val remaining = 100 - updated.fatPct
+            val totalOther = updated.carbsPct + updated.proteinPct
+            if (totalOther == 0) {
+                Triple(remaining / 2, remaining - remaining / 2, updated.fatPct)
+            } else {
+                val newCarbs = (remaining * updated.carbsPct / totalOther).coerceAtMost(remaining)
+                val newProtein = remaining - newCarbs
+                Triple(newCarbs, newProtein, updated.fatPct)
+            }
+        }
+    }
+    return MacroSplit(fixedCarbs, fixedProtein, fixedFat)
 }

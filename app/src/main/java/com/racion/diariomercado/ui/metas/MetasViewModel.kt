@@ -7,11 +7,15 @@ import com.racion.diariomercado.core.AppResult
 import com.racion.diariomercado.domain.model.DayOfWeek
 import com.racion.diariomercado.domain.model.MacroSplit
 import com.racion.diariomercado.domain.model.NutritionGoals
+import com.racion.diariomercado.domain.repository.AuthRepository
+import com.racion.diariomercado.domain.repository.AuthState
 import com.racion.diariomercado.domain.repository.GoalsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -47,7 +51,8 @@ import kotlinx.coroutines.launch
  * explicit commit point.
  */
 class MetasViewModel(
-    private val goalsRepository: GoalsRepository
+    private val goalsRepository: GoalsRepository,
+    private val authRepository: AuthRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<MetasUiState>(MetasUiState.Loading)
@@ -61,11 +66,15 @@ class MetasViewModel(
     }
 
     /**
-     * Observes goals from the repository.
+     * Observes goals from the repository, combined with auth state to determine canSave.
      */
     private fun observeGoals() {
         viewModelScope.launch {
-            goalsRepository.observeGoals().collect { goals ->
+            combine(
+                goalsRepository.observeGoals(),
+                authRepository.authState.distinctUntilChanged()
+            ) { goals, authState ->
+                val canSave = authState is AuthState.Anonymous || authState is AuthState.Authenticated
                 val current = _uiState.value
                 val mergedGoals = when (current) {
                     is MetasUiState.Content -> {
@@ -75,11 +84,15 @@ class MetasViewModel(
                     }
                     else -> goals
                 }
+                val preservedError = (current as? MetasUiState.Content)?.errorMessage
                 lastRepositoryGoals = goals
-                _uiState.value = MetasUiState.Content(
+                MetasUiState.Content(
                     goals = mergedGoals,
-                    errorMessage = null
+                    errorMessage = preservedError,
+                    canSave = canSave
                 )
+            }.collect { state ->
+                _uiState.value = state
             }
         }
     }
@@ -121,21 +134,18 @@ class MetasViewModel(
     }
 
     /**
-     * Persists the current goals through the repository.
+     * Persists the given goals through the repository.
      *
      * The save runs on `viewModelScope` so it survives config changes. The UI state is updated
      * with the result: on success the error message is cleared; on failure the error message is
      * set so the screen can render it and offer a retry.
      */
-    fun onSave() {
-        val currentState = _uiState.value as? MetasUiState.Content ?: return
-        val currentGoals = currentState.goals
-
+    fun onSave(goals: NutritionGoals) {
         _uiState.update { state ->
             (state as? MetasUiState.Content)?.copy(errorMessage = null) ?: state
         }
         viewModelScope.launch {
-            val result = goalsRepository.saveGoals(currentGoals)
+            val result = goalsRepository.saveGoals(goals)
             _uiState.update { state ->
                 (state as? MetasUiState.Content)?.copy(
                     errorMessage = when (result) {

@@ -1,62 +1,62 @@
-# Integration reference
+# Referencia de integración
 
-Verified external reference material for the two backends this app will talk to. Everything
-here was checked against the primary sources; nothing in this file is inferred from memory. If
-you find something that contradicts it, the source wins — fix this file in the same commit.
+Material de referencia externo verificado para los dos backends con los que habla esta app.
+Todo lo de acá fue contrastado contra las fuentes primarias; nada está inferido de memoria. Si
+encontrás algo que lo contradiga, gana la fuente — corregí este archivo en el mismo commit.
 
 ---
 
 ## 1. Open Food Facts
 
-### 1.1 Base URLs
+### 1.1 URLs base
 
-| Purpose                  | URL                                                |
+| Propósito                | URL                                                |
 |--------------------------|----------------------------------------------------|
-| Production (world)       | `https://world.openfoodfacts.org/`                  |
+| Producción (mundial)     | `https://world.openfoodfacts.org/`                  |
 | Test / staging           | `https://world.openfoodfacts.net/`                  |
-| Robotoff (AI predictions)| `https://robotoff.openfoodfacts.org/`               |
+| Robotoff (predicciones)  | `https://robotoff.openfoodfacts.org/`               |
 
-The app uses the world instance. `OpenFoodFactsService` paths are relative
-(`api/v2/product/...`), and the base URL comes from
-`BuildConfig.OPEN_FOOD_FACTS_BASE_URL`, so switching environments is a one-field change.
+La app usa la instancia mundial. Los paths de `OpenFoodFactsService` son relativos
+(`api/v2/product/...`) y la URL base viene de
+`BuildConfig.OPEN_FOOD_FACTS_BASE_URL`, así que cambiar de entorno es cambiar un campo.
 
-### 1.2 Single product — v2
+### 1.2 Producto suelto — v2
 
 ```
 GET https://world.openfoodfacts.org/api/v2/product/{barcode}.json
 ```
 
-**The `User-Agent` header is mandatory.** A request without a proper `User-Agent` is treated as
-bot traffic and blocked. Required format:
+**El header `User-Agent` es obligatorio.** Un request sin un `User-Agent` adecuado se trata como
+tráfico de bot y se bloquea. Formato requerido:
 
 ```
 AppName/Version (contact)
 ```
 
-For example:
+Por ejemplo:
 
 ```
 RacionTuDiarioDeMercado/1.0 (contact@example.com)
 ```
 
-The value is built into `BuildConfig.OPEN_FOOD_FACTS_USER_AGENT` in `app/build.gradle.kts` and
-attached by the OkHttp interceptor in `di/AppContainer.kt`. The contact is meant to be a real,
-monitored address — the API terms ask for a way to reach you, and a `contact@example.com`
-placeholder must be replaced before release.
+El valor se construye en `BuildConfig.OPEN_FOOD_FACTS_USER_AGENT` en `app/build.gradle.kts` y lo
+adjunta el interceptor de OkHttp en `di/AppContainer.kt`. El contacto tiene que ser una dirección
+real y monitoreada — los términos de la API piden una forma de localizarte, y un
+`contact@example.com` de placeholder hay que reemplazarlo antes de publicar.
 
-Passing `?fields=` trims the response to just the keys you read. The full product object has
-dozens of keys; the app requests:
+Pasar `?fields=` recorta la respuesta a las claves que el código lee. El objeto de producto
+completo tiene decenas de claves; la app pide:
 
 ```
 code,product_name,brands,quantity,serving_quantity,serving_size,categories,
 ingredients_text,nutrition_grades,image_front_url,nutriments
 ```
 
-### 1.3 Response envelope — found vs not found
+### 1.3 Sobre de respuesta — encontrado vs. no encontrado
 
-This is the single most important OFF detail, and it is a trap:
+Este es el detalle de OFF más importante, y es una trampa:
 
-**Product found → HTTP 200**
+**Producto encontrado → HTTP 200**
 ```json
 {
   "code": "3017620422003",
@@ -66,7 +66,7 @@ This is the single most important OFF detail, and it is a trap:
 }
 ```
 
-**Product NOT found → also HTTP 200**
+**Producto NO encontrado → también HTTP 200**
 ```json
 {
   "code": "0000000000000",
@@ -76,33 +76,35 @@ This is the single most important OFF detail, and it is a trap:
 }
 ```
 
-There is no 404. `status` is `1` for a hit and `0` for a miss, and `product` is `null` on a
-miss. Any code that checks only the HTTP status and then dereferences
-`body.product!!` crashes on the most common real-world case, which is a barcode that simply is
-not in the database. Check the **body**.
+No hay 404. `status` es `1` en un acierto y `0` en un fallo, y `product` es `null` cuando no
+aparece. Cualquier código que mire solo el status HTTP y después desreferencie
+`body.product!!` crashea en el caso real más común: un código de barras que simplemente no está
+en la base. Hay que mirar el **body**.
 
-### 1.4 `nutriments` field names
+### 1.4 Nombres de campo en `nutriments`
 
-All values are **per 100 g**. The naming is not consistent, and that is not a typo:
+Todos los valores son **por 100 g**. La nomenclatura no es consistente, y no es una errata:
 
-| Domain field  | JSON key                  | Notes                            |
-|---------------|---------------------------|----------------------------------|
-| energy        | `energy-kcal_100g`        | **hyphen** before `kcal`         |
-| carbohydrates | `carbohydrates_100g`      | **plural**                       |
-| protein       | `proteins_100g`           | **plural**                       |
-| fat           | `fat_100g`                | singular — the odd one out       |
-| sugars        | `sugars_100g`             |                                  |
-| fiber         | `fiber_100g`              | US spelling                      |
-| sodium        | `sodium_100g`             | **grams**, not milligrams        |
+| Campo de dominio | Clave JSON              | Notas                            |
+|------------------|-------------------------|----------------------------------|
+| energy           | `energy-kcal_100g`      | **guion** antes de `kcal`        |
+| carbohydrates    | `carbohydrates_100g`    | **plural**                       |
+| protein          | `proteins_100g`         | **plural**                       |
+| fat              | `fat_100g`              | singular — el que se sale        |
+| sugars           | `sugars_100g`           |                                  |
+| fiber            | `fiber_100g`            | ortografía inglesa              |
+| sodium           | `sodium_100g`           | **gramos**, no miligramos        |
 
-Sodium in particular is easy to get wrong by three orders of magnitude: `sodium_100g` is in
-grams. The 100 g values are often present while `sugars_100g`, `fiber_100g` and `sodium_100g`
-are `null` for older crowd-sourced products, which is why every DTO field is nullable.
+El sodio en particular es fácil de errar por tres órdenes de magnitud: `sodium_100g` está en
+gramos. Los valores de 100 g suelen estar presentes mientras que `sugars_100g`, `fiber_100g` y
+`sodium_100g` son `null` en productos antiguos colaborativos, y por eso todos los campos del DTO
+son nullable.
 
-### 1.5 Free-text search — v2 does not support it
+### 1.5 Búsqueda de texto libre — v2 no la soporta
 
-**Open Food Facts v2 has no free-text search.** The v2 search endpoints only do faceted/tag
-filtering. Free text exists exclusively on the legacy CGI endpoint:
+**Open Food Facts v2 no tiene búsqueda de texto libre.** Los endpoints de búsqueda de v2 solo
+hacen filtrado por facetas y etiquetas. El texto libre existe únicamente en el endpoint CGI
+legacy:
 
 ```
 GET https://world.openfoodfacts.org/cgi/search.pl
@@ -114,7 +116,7 @@ GET https://world.openfoodfacts.org/cgi/search.pl
     &page_size=20
 ```
 
-Response shape:
+Forma de la respuesta:
 
 ```json
 {
@@ -125,70 +127,76 @@ Response shape:
 }
 ```
 
-That is why `OpenFoodFactsService` talks to two different API generations: v2 for the product
-read, v1 for the search. It is not an oversight, and it is not fixable by a v2 flag.
+Por eso `OpenFoodFactsService` habla con dos generaciones distintas de la API: v2 para leer el
+producto, v1 para buscar. No es un descuido, y ningún flag de v2 lo arregla.
 
-`search_simple=1` disables the spellcheck-and-rerank step — faster and more predictable for a
-debounced type-ahead.
+`search_simple=1` desactiva el paso de corrector ortográfico y re-ranking: más rápido y más
+predecible para un type-ahead con debounce.
 
-### 1.6 Rate limits
+### 1.6 Límites de tasa
 
-| Endpoint            | Limit              |
-|---------------------|--------------------|
-| Product read (v2)   | **15 requests/min** |
-| Search              | **10 requests/min** |
+| Endpoint            | Límite              |
+|---------------------|---------------------|
+| Lectura de producto (v2) | **15 requests/min** |
+| Búsqueda            | **10 requests/min** |
 
-Breaching the limit returns **HTTP 503**. The app must map that to `AppError.RateLimited` and
-surface a "wait a moment" state, not a generic server error.
+Pasarse del límite devuelve **HTTP 503**. La app tiene que mapear eso a
+`AppError.RateLimited` y mostrar un estado de "esperá un momento", no un error de servidor
+genérico.
 
-Two consequences that are easy to get wrong:
+Dos consecuencias fáciles de errar:
 
-- **Search-as-you-type is explicitly forbidden.** The search budget is ~10 requests per minute —
-  roughly three searches. Firing one request per keystroke exhausts it in under a second, gets
-  the IP rate-limited, and can get the app blocked. Debounce and require an explicit submit.
-- Product reads and searches have **separate** budgets, so a scan loop that reads a barcode per
-  frame is the other way to get blocked fast. Scan once, then stop.
+- **El search-as-you-type está explícitamente prohibido.** El presupuesto de búsqueda es de
+  ~10 requests por minuto — unas tres búsquedas. Disparar un request por tecla lo agota en
+  menos de un segundo, deja la IP rate-limitada y puede hacer que bloqueen la app. Hacé
+  debounce y exigí un submit explícito.
+- Lecturas de producto y búsquedas tienen presupuestos **separados**, así que un loop de
+  escaneo que lee un código de barras por frame es la otra forma de bloquearse rápido.
+  Escaneá una vez y frená.
 
-### 1.7 Images
+### 1.7 Imágenes
 
-The front-of-pack image is `image_front_url`, a direct HTTPS URL to a static image host
-(`images.openfoodfacts.org` and mirrors). There is no image resizing parameter — the URL serves
-one size, so client-side downscaling is the app's job (Coil does this).
+La imagen frontal es `image_front_url`, una URL HTTPS directa a un host de imágenes estáticas
+(`images.openfoodfacts.org` y sus espejos). No hay parámetro de resize — la URL sirve un solo
+tamaño, así que el downscale del lado del cliente es tarea de la app (Coil lo hace).
 
-Image URLs are frequently `null` for incomplete products. `FoodProduct.emoji` exists precisely so
-a row always has a visual, without the domain depending on the network.
+Las URLs de imagen son frecuentemente `null` en productos incompletos. `FoodProduct.emoji` existe
+precisamente para que una fila siempre tenga algo visual, sin que el dominio dependa de la red.
 
-### 1.8 Licensing and attribution
+### 1.8 Licencia y atribución
 
-| Asset | License | Obligation |
-|-------|---------|------------|
-| Product data (name, brands, categories, nutriments) | **ODbL** (Open Database License) | Share-alike + attribution if you redistribute |
-| Product images | **CC-BY-SA** | Attribution + share-alike |
-| The database as a whole | ODbL | Attribution to Open Food Facts is **required** |
+| Asset | Licencia | Obligación |
+|-------|----------|------------|
+| Datos de producto (nombre, marcas, categorías, nutriments) | **ODbL** (Open Database License) | Share-alike + atribución si redistribuís |
+| Imágenes de producto | **CC-BY-SA** | Atribución + share-alike |
+| La base de datos entera | ODbL | La atribución a Open Food Facts es **obligatoria** |
 
-Practical obligations before shipping:
+Obligaciones prácticas antes de publicar:
 
-1. **Attribution is required.** "Data from Open Food Facts" with a link to
-   `https://world.openfoodfacts.org` must be visible wherever product data is shown. The app
-   already links to a data-sources policy from the onboarding screen — that is the natural home
-   for it.
-2. **Share-alike is real.** ODbL and CC-BY-SA both require that derived, publicly-distributed
-   databases be released under the same terms. This is the strongest argument against caching
-   OFF responses into your own Firestore and then exposing that as a proprietary dataset.
-3. **The API usage form must be filled in.** OFF asks apps to register their usage so they can
-   get in touch about rate limits or breaking changes. Do this before publishing.
-4. **Product data is crowd-sourced and wrong sometimes.** Treat any single value as a
-   user-supplied claim, not a fact. That is a UI problem as much as a data problem.
+1. **La atribución es obligatoria.** "Data from Open Food Facts" con un link a
+   `https://world.openfoodfacts.org` tiene que estar visible donde se muestren datos de
+   producto. La app ya linkea a una política de fuentes de datos desde la pantalla de
+   onboarding — ese es el lugar natural.
+2. **El share-alike es real.** ODbL y CC-BY-SA exigen que las bases derivadas y
+   públicamente distribuidas se liberen bajo los mismos términos. Este es el argumento más
+   fuerte en contra de cachear respuestas de OFF en tu propio Firestore y después exponer eso
+   como un dataset propietario.
+3. **Hay que llenar el formulario de uso de la API.** OFF pide que las apps registren su uso
+   para poder contactarlas por límites de tasa o cambios rompientes. Hacelo antes de publicar.
+4. **Los datos de producto son colaborativos y a veces están mal.** Tratá cada valor como una
+   afirmación provista por el usuario, no como un hecho. Eso es un problema de UI tanto como de
+   datos.
 
 ---
 
 ## 2. Firebase Cloud Firestore
 
-**Role in the architecture (since Phase 2 of the roadmap):** Firestore is the *remote projection /
-sync layer*. The source of truth on device is ROOM (offline-first, delivery requirement). Every
-fact below is still true of Firestore itself; the difference is who is authoritative. See §2.8.
+**Rol en la arquitectura (desde la Fase 2 del roadmap):** Firestore es la *proyección remota /
+capa de sync*. La fuente de verdad en el dispositivo es ROOM (offline-first, requisito de
+entrega). Todo lo que sigue sigue siendo cierto de Firestore en sí; lo que cambia es quién es
+la autoridad. Ver §2.8.
 
-### 2.1 Collection layout used by this app
+### 2.1 Layout de colecciones que usa esta app
 
 ```
 users/{uid}
@@ -199,20 +207,26 @@ users/{uid}
      └─ entries/{entryId}    -> individual DiaryEntry
 ```
 
-- The `uid` is the Firestore Auth uid. With anonymous auth it is a random id that survives app
-  restarts but **not** "clear app data" or a reinstall.
-- The `yyyy-MM-dd` key is a lexical `LocalDate.toString()`, so `days/` is already in
-  chronological order and a week is a simple range query.
-- The `profile` / `goals` split is deliberate. Firestore's last-write-wins is per **document**,
-  not per field, so sharing one document would let a "save goals" write silently overwrite a
-  weight the user just typed.
-- The onboarding flag is a **subdocument** because consent has to be writable on its own. A
-  user who accepts the disclaimer and then fails to save their profile must still be recorded
-  as consented.
+**Estado de implementación a 4 oct 2026.** De ese layout, `profile`, `goals` y
+`onboarding/completed` están implementados y cableados (`FirestoreProfileRepository`,
+`FirestoreGoalsRepository`). `days/{yyyy-MM-dd}` y `entries/{entryId}` son diseño aprobado pero
+**no existen**: `FirestoreDiaryRepository` es un stub cuyos métodos `addEntry`, `deleteEntry` y
+`recentScans` tiran `NotImplementedError`. ROOM sigue siendo la fuente de verdad del diario.
 
-### 2.2 Security rules — deny by default
+- El `uid` es el uid de Firebase Auth. Con auth anónimo es un id aleatorio que sobrevive
+  reinicios de la app pero **no** "borrar datos de la app" ni una reinstalación.
+- La clave `yyyy-MM-dd` es un `LocalDate.toString()` lexicográfico, así que `days/` ya está en
+  orden cronológico y una semana es una consulta de rango simple.
+- La separación `profile` / `goals` es deliberada. El last-write-wins de Firestore es por
+  **documento**, no por campo, así que compartir un solo documento dejaría que un "guardar
+  metas" sobrescribiera en silencio un peso que el usuario acaba de escribir.
+- El flag de onboarding es un **subdocumento** porque el consentimiento tiene que poder
+  escribirse solo. Un usuario que acepta el aviso y después falla al guardar su perfil igual
+  tiene que quedar registrado como consentido.
 
-Nothing is public. Every rule must verify ownership:
+### 2.2 Reglas de seguridad — deny por defecto
+
+Nada es público. Cada regla tiene que verificar propiedad:
 
 ```
 match /users/{userId} {
@@ -227,12 +241,18 @@ match /users/{userId} {
 }
 ```
 
-The default deny is what makes a missing rule safe. A rule you did not write blocks, it does not
-allow.
+El deny por defecto es lo que hace que una regla faltante sea segura. Una regla que no
+escribiste bloquea, no permite.
 
-### 2.3 `PersistentCacheSettings` vs the deprecated `setPersistenceEnabled`
+> **Hueco abierto y bloqueante para producción.** El repo **no tiene `firestore.rules` ni
+> `firebase.json`**. El código ya escribe a Firestore (`saveProfile`, `saveGoals`,
+> `completeOnboarding`) sin reglas versionadas que lo gobiernen. El bloque de arriba es la
+> especificación prevista, no algo aplicado. Hasta que exista y esté desplegado, el estado de
+> seguridad real de esos datos depende de lo que haya configurado a mano en la consola.
 
-Offline persistence is **on by default**. Modern Firestore configures it through
+### 2.3 `PersistentCacheSettings` vs el `setPersistenceEnabled` deprecado
+
+La persistencia offline está **on por defecto**. El Firestore moderno la configura mediante
 `PersistentCacheSettings`:
 
 ```kotlin
@@ -242,87 +262,107 @@ val settings = firestoreSettings {
 firestore.setFirestoreSettings(settings)
 ```
 
-The older `setPersistenceEnabled(true)` is **deprecated** and is a no-op on recent Android SDK
-versions. Do not call it — the "fix" that looks like it is doing something is doing nothing.
+El `setPersistenceEnabled(true)` viejo está **deprecado** y es un no-op en versiones recientes
+del SDK de Android. No lo llames — el "arreglo" que parece estar haciendo algo no está haciendo
+nada.
 
-### 2.4 The trap: settings must be set before any other call
+### 2.4 La trampa: los settings van antes de cualquier otro call
 
-`setFirestoreSettings()` **must run before any other call on that Firestore instance** —
-including a snapshot listener, a `get()`, or a simple read. Calling it afterwards throws:
+`setFirestoreSettings()` **tiene que correr antes de cualquier otro call sobre esa instancia
+de Firestore** — incluyendo un snapshot listener, un `get()`, o una lectura simple. Llamarlo
+después tira:
 
 ```
 java.lang.IllegalStateException: Firestore has already been started.
 ```
 
-This is a **runtime** failure, not a compile-time one, so the compiler will not help. That is
-why it belongs in `RacionApplication.onCreate()`, not lazily inside a repository: a repository
-may be constructed after some other code has already touched Firestore, and by then it is too
-late. Configure once, at startup, in one place.
+Esto es un fallo de **runtime**, no de compilación, así que el compilador no ayuda. Por eso
+pertenece a `RacionApplication.onCreate()` y no adentro de un repositorio lazy: un repositorio
+puede construirse después de que otro código ya haya tocado Firestore, y para entonces ya
+tarde. Configurá una vez, al arranque, en un solo lugar.
 
-### 2.5 Write throughput: ~1 write/sec per document
+**Lo que hace esta app, y por qué.** `RacionApplication` llama `initializeFirestoreIfReady(...)`
+después de `bootstrapAnonymousSession()`, y **no** llama `setFirestoreSettings` en absoluto. Los
+dos constraints apuntan en direcciones distintas y por eso la tentación es cablear ambos:
 
-Firestore allows roughly **one write per second per document**. A hot counter is the classic
-way to hit that ceiling and start seeing `ABORTED` / contention errors.
+- `setFirestoreSettings` tiene que correr antes de cualquier otro call sobre la instancia.
+- El sign-in anónimo tiene que correr antes de cualquier lectura, porque las reglas de
+  seguridad están keyeadas en un `currentUser` que todavía no existe.
 
-This is why the design keeps a **running total per day** and never rewrites a single shared
-"totals" document. Writing an entry:
+Como ningún default necesita cambiar — la persistencia offline ya está on, y
+`setPersistenceEnabled` está deprecado e ignorado — la app arranca sin tocar settings y se
+evita el ordenamiento por completo. Si alguna vez hace falta setearlos, el lugar sigue siendo
+`RacionApplication.onCreate()` y no un repositorio.
 
-1. `set` the entry subdocument — a *new* document, so no per-document rate limit applies.
-2. `FieldValue.increment(...)` the four totals on `days/{date}`, plus
+### 2.5 Throughput de escritura: ~1 escritura/seg por documento
+
+Firestore permite alrededor de **una escritura por segundo por documento**. Un contador muy
+escrito es la forma clásica de topear ese techo y empezar a ver errores `ABORTED` /
+contención.
+
+Por eso el diseño mantiene un **total acumulado por día** y nunca reescribe un único documento
+compartido de "totales". Al escribir una entrada:
+
+1. `set` del subdocumento de la entrada — un documento *nuevo*, así que no aplica el límite
+   por documento.
+2. `FieldValue.increment(...)` sobre los cuatro totales en `days/{date}`, más
    `FieldValue.serverTimestamp()`.
 
-`increment` is applied **server-side**, so two entries logged at the same instant from two
-devices merge correctly. A read-modify-write of the total would lose one of them.
+El `increment` se aplica **del lado del servidor**, así que dos entradas registradas al mismo
+instante desde dos dispositivos se combinan bien. Un read-modify-write del total perdería una
+de las dos.
 
-### 2.6 Transactions fail offline
+### 2.6 Las transacciones fallan sin conexión
 
-A `runTransaction { ... }` that reads and then writes needs the **server** to arbitrate. With
-no connectivity it throws instead of queueing. This app is used in a market with intermittent
-signal, so a transaction that holds the day total is not an option. Individual `set` and
-`increment` calls queue locally and flush when the connection returns, which is the behaviour
-the diary actually wants.
+Un `runTransaction { ... }` que lee y después escribe necesita que el **servidor** arbitre. Sin
+conectividad tira en vez de encolarse. Esta app se usa en un mercado con señal intermitente,
+así que una transacción que custodie el total del día no es una opción. Las llamadas
+individuales de `set` e `increment` sí se encolan localmente y se vacían cuando vuelve la
+conexión, que es el comportamiento que el diario realmente quiere.
 
-### 2.7 Aggregate queries are server-side only
+### 2.7 Las consultas agregadas son solo de servidor
 
-Firestore's `AggregateField.sum` **cannot run against the local cache**. This is the fact that
-forces the whole daily-aggregate design:
+El `AggregateField.sum` de Firestore **no puede correr contra la caché local**. Ese es el
+hecho que forzó todo el diseño de agregado diario:
 
-| Approach                                   | Why it does not work here                                     |
-|--------------------------------------------|---------------------------------------------------------------|
-| Client-side `sum` over the week's entries  | Downloads every entry of the week on every screen open        |
-| `AggregateField.sum`                        | Server-side only; useless offline, one round trip, no cache   |
-| Client transaction that keeps a total       | Fails offline (§2.6) and hits ~1 write/sec per doc (§2.5)      |
-| **Running total per day document**          | One read of 7 small documents, `increment` merges concurrently |
+| Enfoque                                   | Por qué no sirve acá                                |
+|-------------------------------------------|-----------------------------------------------------|
+| `sum` del lado del cliente sobre las entradas de la semana | Descarga todas las entradas de la semana en cada apertura de pantalla |
+| `AggregateField.sum`                      | Solo servidor; inútil offline, un round trip, sin caché |
+| Transacción del cliente que lleva un total | Falla offline (§2.6) y topea ~1 escritura/seg por doc (§2.5) |
+| **Total acumulado por documento de día**  | Una lectura de 7 documentos chicos, `increment` combina concurrentemente |
 
-The trade-off accepted by the last row: deleting an entry needs a **compensating decrement**,
-and the day document is a denormalised cache that a repair job must be able to rebuild from the
-entries subcollection. Write that rebuild job before the first user, not after the first bug
-report.
+El trade-off que acepta la última fila: borrar una entrada necesita un **decrement
+compensatorio**, y el documento del día es una caché desnormalizada que un job de reparación
+tiene que poder reconstruir desde la subcolección de entradas. Escribí ese job de reparación
+antes del primer usuario, no después del primer reporte de bug.
 
-### 2.8 Offline-first sync with ROOM
+### 2.8 Sync offline-first con ROOM
 
-ROOM is the source of truth on device; Firestore is the sync/backup projection. This is both a
-delivery requirement (local DB + online service) and the right shape for a market app with
-intermittent signal.
+ROOM es la fuente de verdad en el dispositivo; Firestore es la proyección de sync/backup. Esto
+es a la vez un requisito de entrega (base local + servicio online) y la forma correcta para una
+app de mercado con señal intermitente.
 
-- Local day totals are computed with `SUM` in ROOM (roadmap `DB-4`). The remote `days/{date}`
-  document keeps `FieldValue.increment` semantics so two devices syncing the same day merge
-  correctly.
-- Sync is idempotent on the entry id: push local writes (entry + increments) when connectivity
-  returns, then pull remote changes. A pull **must never delete local rows that have not been
-  pushed yet** — that is the one sync bug that silently destroys data.
-- Conflict policy: last-write-wins per entry with server timestamps. No intra-entry merging.
-- The `days/{date}` totals remain a denormalised cache repairable from `entries` — the repair job
-  still exists and also runs locally from ROOM.
+- Los totales locales del día se calculan con `SUM` en ROOM (roadmap `DB-4`). El documento
+  remoto `days/{date}` mantiene semántica de `FieldValue.increment` para que dos dispositivos
+  sincronizando el mismo día combinen bien.
+- El sync es idempotente sobre el id de la entrada: primero se suben las escrituras locales
+  (entrada + increments) cuando vuelve la conectividad, después se bajan los cambios remotos.
+  Un pull **nunca debe borrar filas locales que todavía no se subieron** — ese es el bug de
+  sync que destruye datos en silencio.
+- Política de conflicto: last-write-wins por entrada con server timestamps. Sin merge dentro de
+  una misma entrada.
+- Los totales de `days/{date}` siguen siendo una caché desnormalizada reparable desde
+  `entries` — el job de reparación existe y también corre localmente desde ROOM.
 
 ---
 
-## 3. Quick links
+## 3. Links rápidos
 
-- Open Food Facts API docs: <https://openfoodfacts.github.io/openfoodfacts-server/api/>
-- Open Food Facts data licensing: <https://world.openfoodfacts.org/data>
-- Open Food Facts rate limits / terms: <https://world.openfoodfacts.org/terms-of-use>
-- Firestore data model: <https://firebase.google.com/docs/firestore/data-model>
-- Firestore offline persistence: <https://firebase.google.com/docs/firestore/manage-data/enable-offline>
-- Firestore queries and aggregation: <https://firebase.google.com/docs/firestore/query-data/aggregation-queries>
-- Firestore security rules: <https://firebase.google.com/docs/firestore/security/rules-structure>
+- Documentación de la API de Open Food Facts: <https://openfoodfacts.github.io/openfoodfacts-server/api/>
+- Licencia de datos de Open Food Facts: <https://world.openfoodfacts.org/data>
+- Límites de tasa / términos de Open Food Facts: <https://world.openfoodfacts.org/terms-of-use>
+- Modelo de datos de Firestore: <https://firebase.google.com/docs/firestore/data-model>
+- Persistencia offline de Firestore: <https://firebase.google.com/docs/firestore/manage-data/enable-offline>
+- Consultas y agregación de Firestore: <https://firebase.google.com/docs/firestore/query-data/aggregation-queries>
+- Reglas de seguridad de Firestore: <https://firebase.google.com/docs/firestore/security/rules-structure>

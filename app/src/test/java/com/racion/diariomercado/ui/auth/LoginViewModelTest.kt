@@ -1,9 +1,11 @@
-package com.racion.diariomercado.ui.auth
+﻿package com.racion.diariomercado.ui.auth
 
 import com.racion.diariomercado.core.AppError
 import com.racion.diariomercado.core.AppResult
+import com.racion.diariomercado.domain.repository.AuthErrorMarkers
 import com.racion.diariomercado.domain.repository.AuthRepository
 import com.racion.diariomercado.domain.repository.AuthState
+import com.racion.diariomercado.domain.repository.SessionDataReassigner
 import com.racion.diariomercado.ui.screens.auth.LoginViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +16,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.advanceUntilIdle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -59,7 +62,7 @@ class LoginViewModelTest {
     @Test
     fun blankEmailIsRejectedAndTheRepositoryIsNotCalled() = runTest {
         val repository = FakeAuthRepository()
-        val viewModel = LoginViewModel(repository)
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
 
         viewModel.updateEmail("")
         viewModel.updatePassword("secreto123")
@@ -74,7 +77,7 @@ class LoginViewModelTest {
     @Test
     fun emailWithoutAnAtSignIsRejectedAndTheRepositoryIsNotCalled() = runTest {
         val repository = FakeAuthRepository()
-        val viewModel = LoginViewModel(repository)
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
 
         viewModel.updateEmail("julia.ejemplo.com")
         viewModel.updatePassword("secreto123")
@@ -90,7 +93,7 @@ class LoginViewModelTest {
     @Test
     fun shortPasswordIsRejectedAndTheRepositoryIsNotCalled() = runTest {
         val repository = FakeAuthRepository()
-        val viewModel = LoginViewModel(repository)
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
 
         viewModel.updateEmail("julia@ejemplo.com")
         // 5 characters: one below the minimum, so a >= 6 check passes and a > 6 check fails.
@@ -108,7 +111,7 @@ class LoginViewModelTest {
     @Test
     fun aSixCharacterPasswordIsAcceptedSoTheBoundaryIsPinned() = runTest {
         val repository = FakeAuthRepository()
-        val viewModel = LoginViewModel(repository)
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
 
         viewModel.updateEmail("julia@ejemplo.com")
         viewModel.updatePassword("123456")
@@ -125,7 +128,7 @@ class LoginViewModelTest {
     @Test
     fun validCredentialsCallTheRepositoryAndFlagTheUserAsLoggedIn() = runTest {
         val repository = FakeAuthRepository()
-        val viewModel = LoginViewModel(repository)
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
 
         viewModel.updateEmail("julia@ejemplo.com")
         viewModel.updatePassword("secreto123")
@@ -146,7 +149,7 @@ class LoginViewModelTest {
     @Test
     fun aRepositoryFailureSurfacesAMessageAndStopsLoading() = runTest {
         val repository = FakeAuthRepository(signInResult = AppResult.Failure(AppError.Network))
-        val viewModel = LoginViewModel(repository)
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
 
         viewModel.updateEmail("julia@ejemplo.com")
         viewModel.updatePassword("secreto123")
@@ -163,13 +166,225 @@ class LoginViewModelTest {
     }
 
     // -------------------------------------------------------------------------------------
+    // Google sign-in
+    //
+    // These pin down the three states of the system account picker, which is the part of the flow
+    // with no equivalent in the email form: the picker is open, the user dismissed it, or the
+    // token came back. Only the third one is allowed to reach the repository, and the first two
+    // are the reason the button needs its own progress flag instead of reusing [isLoading].
+    // -------------------------------------------------------------------------------------
+
+    @Test
+    fun requestingGoogleSignInRaisesTheProgressFlagWithoutTouchingTheRepository() = runTest {
+        val repository = FakeAuthRepository()
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
+
+        viewModel.onGoogleSignInRequested()
+
+        // The flag is what disables the button while the picker is open. It is NOT `isLoading`:
+        // that one means "a network call is in flight", and reusing it would make the email form
+        // look busy while the user is still looking at an account chooser.
+        assertTrue(viewModel.uiState.value.isGoogleInProgress)
+        assertFalse(viewModel.uiState.value.isLoading)
+        assertEquals(0, repository.googleSignInCalls)
+        assertNull(viewModel.uiState.value.errorMessage)
+    }
+
+    @Test
+    fun dismissingTheAccountPickerIsSilentAndTheRepositoryIsNotCalled() = runTest {
+        val repository = FakeAuthRepository()
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
+
+        viewModel.onGoogleSignInRequested()
+        viewModel.onGoogleSignInCancelled()
+
+        // No error message on purpose. The user did exactly what they meant to do; telling them
+        // "something went wrong" for a deliberate dismissal is the most common way a cancel
+        // becomes a support ticket.
+        assertNull(viewModel.uiState.value.errorMessage)
+        assertFalse(viewModel.uiState.value.isGoogleInProgress)
+        assertFalse(viewModel.uiState.value.isLoggedIn)
+        assertEquals(0, repository.googleSignInCalls)
+    }
+
+    @Test
+    fun aGoogleIdTokenReachesTheRepositoryAndFlagsTheUserAsLoggedIn() = runTest {
+        val repository = FakeAuthRepository()
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
+
+        viewModel.onGoogleSignInRequested()
+        viewModel.onGoogleSignIn("id-token-from-google")
+
+        assertEquals(1, repository.googleSignInCalls)
+        assertEquals("id-token-from-google", repository.lastGoogleIdToken)
+        assertTrue(viewModel.uiState.value.isLoggedIn)
+        assertFalse(viewModel.uiState.value.isGoogleInProgress)
+        assertNull(viewModel.uiState.value.errorMessage)
+    }
+
+    @Test
+    fun aGoogleFailureStopsTheProgressFlagSoTheButtonCanBeRetried() = runTest {
+        val repository = FakeAuthRepository(
+            googleSignInResult = AppResult.Failure(AppError.Network)
+        )
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
+
+        viewModel.onGoogleSignInRequested()
+        viewModel.onGoogleSignIn("id-token-from-google")
+
+        assertEquals(
+            "Sin conexión. Revisá tu internet e intentá de nuevo.",
+            viewModel.uiState.value.errorMessage
+        )
+        assertFalse(viewModel.uiState.value.isGoogleInProgress)
+        assertFalse(viewModel.uiState.value.isLoggedIn)
+    }
+
+    @Test
+    fun aGoogleAccountThatAlreadyExistsAsksBeforeEndingTheGuestSession() = runTest {
+        val repository = FakeAuthRepository(
+            anonymousUid = ANON_UID,
+            googleSignInResult = AppResult.Failure(
+                AppError.Server(code = null, message = AuthErrorMarkers.GOOGLE_ACCOUNT_EXISTS)
+            )
+        )
+        val reassigner = FakeSessionDataReassigner()
+        val viewModel = LoginViewModel(repository, reassigner)
+
+        viewModel.onGoogleSignInRequested()
+        viewModel.onGoogleSignIn("id-token-from-google")
+
+        // Not an error. The account exists, so there IS a way in — it just ends the guest session,
+        // which is not a thing to do to someone without asking. The old behaviour answered this
+        // with "esa cuenta ya está registrada, iniciá sesión con ella", which on an anonymous
+        // session is advice the user cannot follow from this screen.
+        assertTrue(viewModel.uiState.value.showGoogleMergeConfirmation)
+        assertNull(viewModel.uiState.value.errorMessage)
+        assertEquals(0, repository.googleReplaceCalls)
+        assertEquals(0, reassigner.calls)
+        assertFalse(viewModel.uiState.value.isGoogleInProgress)
+    }
+
+    @Test
+    fun confirmingTheMergeInLoginRekeysTheLocalRowsToo() = runTest {
+        val repository = FakeAuthRepository(
+            anonymousUid = ANON_UID,
+            googleReplaceUid = EXISTING_UID,
+            googleSignInResult = AppResult.Failure(
+                AppError.Server(code = null, message = AuthErrorMarkers.GOOGLE_ACCOUNT_EXISTS)
+            )
+        )
+        // Pre-set the anonymous uid so currentUid is ANON_UID before the merge
+        repository.uid = ANON_UID
+        repository.state.value = AuthState.Anonymous
+        
+        val reassigner = FakeSessionDataReassigner()
+        val viewModel = LoginViewModel(repository, reassigner)
+        advanceUntilIdle()
+
+        viewModel.onGoogleSignInRequested()
+        viewModel.onGoogleSignIn("id-token-from-google")
+        viewModel.onGoogleMergeConfirmed()
+        advanceUntilIdle()
+
+        assertEquals(1, repository.googleReplaceCalls)
+        assertEquals("id-token-from-google", repository.lastGoogleReplaceIdToken)
+        assertEquals(1, reassigner.calls)
+        assertEquals(ANON_UID, reassigner.lastPair?.first)
+        assertEquals(EXISTING_UID, reassigner.lastPair?.second)
+        assertFalse(viewModel.uiState.value.showGoogleMergeConfirmation)
+    }
+
+    @Test
+    fun dismissingTheMergeInLoginLeavesTheGuestSessionAlone() = runTest {
+        val repository = FakeAuthRepository(
+            anonymousUid = ANON_UID,
+            googleSignInResult = AppResult.Failure(
+                AppError.Server(code = null, message = AuthErrorMarkers.GOOGLE_ACCOUNT_EXISTS)
+            )
+        )
+        val reassigner = FakeSessionDataReassigner()
+        val viewModel = LoginViewModel(repository, reassigner)
+
+        viewModel.onGoogleSignInRequested()
+        viewModel.onGoogleSignIn("id-token-from-google")
+        viewModel.onGoogleMergeDismissed()
+
+        assertFalse(viewModel.uiState.value.showGoogleMergeConfirmation)
+        assertEquals(0, repository.googleReplaceCalls)
+        assertEquals(0, reassigner.calls)
+        assertNull(viewModel.uiState.value.errorMessage)
+    }
+
+    @Test
+    fun aDisabledGoogleProviderNamesTheConsoleStepInsteadOfBlamingTheUser() = runTest {
+        val repository = FakeAuthRepository(
+            googleSignInResult = AppResult.Failure(
+                AppError.Server(code = null, message = AuthErrorMarkers.PROVIDER_DISABLED)
+            )
+        )
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
+
+        viewModel.onGoogleSignInRequested()
+        viewModel.onGoogleSignIn("id-token-from-google")
+
+        val message = viewModel.uiState.value.errorMessage
+        assertNotNull(message)
+        // `orEmpty()` because the assert above is what proves it is non-null: JUnit4's
+        // `assertNotNull` does not smart-cast, and a second `!!` here would read as noise.
+        assertTrue(message.orEmpty().contains("Google"))
+        assertFalse(viewModel.uiState.value.isGoogleInProgress)
+    }
+
+    @Test
+    fun aDeviceWithoutGoogleOffersTheEmailPathInsteadOfAskingForARetry() = runTest {
+        val repository = FakeAuthRepository()
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
+
+        viewModel.onGoogleSignInRequested()
+        viewModel.onGoogleSignInProviderUnavailable()
+
+        // "Intentá de nuevo" is actively wrong on this one: there is no Google on the device, so the
+        // same tap fails identically forever. The only useful sentence points at the other button
+        // that is still on screen.
+        val message = viewModel.uiState.value.errorMessage
+        assertNotNull(message)
+        assertTrue(message.orEmpty().contains("correo"))
+        assertFalse(viewModel.uiState.value.isGoogleInProgress)
+        assertFalse(viewModel.uiState.value.isLoggedIn)
+        // Nothing was exchanged, so the repository must not be touched. Asserting this is what keeps
+        // a future refactor from routing this branch through `signInWithGoogle` with an empty token.
+        assertEquals(0, repository.googleSignInCalls)
+    }
+
+    @Test
+    fun anUnreadableCredentialIsReportedThroughTheEmptyTokenBranch() = runTest {
+        val repository = FakeAuthRepository()
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
+
+        // The launcher reports "the sheet came back but we could not read a token" by handing over
+        // the same blank token a failed launch would. Both paths must land on one message, so the
+        // navigation layer only has to know about `onGoogleSignIn` and not about a second method.
+        viewModel.onGoogleSignInRequested()
+        viewModel.onGoogleSignIn("")
+
+        assertEquals(
+            "No pudimos leer tu cuenta de Google. Intentá de nuevo.",
+            viewModel.uiState.value.errorMessage
+        )
+        assertFalse(viewModel.uiState.value.isGoogleInProgress)
+        // A blank token is rejected locally, so the provider is never asked.
+        assertEquals(0, repository.googleSignInCalls)
+    }
+
+    // -------------------------------------------------------------------------------------
     // Sign-up: the two rules that only exist on the register form
     // -------------------------------------------------------------------------------------
 
     @Test
     fun mismatchedConfirmationIsRejectedAndTheRepositoryIsNotCalled() = runTest {
         val repository = FakeAuthRepository()
-        val viewModel = LoginViewModel(repository)
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
 
         viewModel.updateEmail("julia@ejemplo.com")
         viewModel.updatePassword("secreto123")
@@ -183,7 +398,7 @@ class LoginViewModelTest {
     @Test
     fun anEmptyConfirmationIsRejectedDistinctlyFromAMismatch() = runTest {
         val repository = FakeAuthRepository()
-        val viewModel = LoginViewModel(repository)
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
 
         viewModel.updateEmail("julia@ejemplo.com")
         viewModel.updatePassword("secreto123")
@@ -199,7 +414,7 @@ class LoginViewModelTest {
     @Test
     fun matchingPasswordsReachTheRepositoryAndFlagTheUserAsLoggedIn() = runTest {
         val repository = FakeAuthRepository()
-        val viewModel = LoginViewModel(repository)
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
 
         viewModel.updateEmail("julia@ejemplo.com")
         viewModel.updatePassword("secreto123")
@@ -216,7 +431,7 @@ class LoginViewModelTest {
         val repository = FakeAuthRepository(
             signUpResult = AppResult.Failure(AppError.RateLimited)
         )
-        val viewModel = LoginViewModel(repository)
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
 
         viewModel.updateEmail("julia@ejemplo.com")
         viewModel.updatePassword("secreto123")
@@ -237,7 +452,7 @@ class LoginViewModelTest {
     @Test
     fun onErrorShownClearsTheMessageWithoutTouchingTheFormFields() = runTest {
         val repository = FakeAuthRepository()
-        val viewModel = LoginViewModel(repository)
+        val viewModel = LoginViewModel(repository, FakeSessionDataReassigner())
 
         viewModel.updateEmail("julia@ejemplo.com")
         viewModel.updatePassword("12345")
@@ -258,13 +473,31 @@ class LoginViewModelTest {
      * [signInCalls] / [signUpCalls] exist only to assert the negative case — that an invalid form
      * did NOT reach the data layer — so they are the whole reason this is a fake rather than a
      * mock with no verification on it.
+     *
+     * [signInAnonymouslyCalls] / [promoteCalls] follow the same convention for the anonymous-first
+     * commands: they are here so a ViewModel that claims an account can assert it reached the
+     * repository exactly once, with the arguments the user typed. No test exercises them yet —
+     * [LoginViewModel] does not call either — but the contract is three-state now, and a fake that
+     * silently dropped them would not compile.
+     *
+     * [googleSignInCalls] / [lastGoogleIdToken] exist for the same reason on the Google path, and
+     * [signInAnonymouslyCalls] above doubles as the signal for whether the repository was asked
+     * to link or to sign in — the data-preserving branch is asserted in
+     * `FirebaseAuthRepository`'s own tests, not here, because this fake has no Firebase user.
      */
     private class FakeAuthRepository(
         private val signInResult: AppResult<Unit> = AppResult.Success(Unit),
-        private val signUpResult: AppResult<Unit> = AppResult.Success(Unit)
+        private val signUpResult: AppResult<Unit> = AppResult.Success(Unit),
+        private val signInAnonymouslyResult: AppResult<Unit> = AppResult.Success(Unit),
+        private val promoteResult: AppResult<Unit> = AppResult.Success(Unit),
+        private val googleSignInResult: AppResult<Unit> = AppResult.Success(Unit),
+        private val googleReplaceResult: AppResult<Unit> = AppResult.Success(Unit),
+        private val anonymousUid: String? = null,
+        private val googleReplaceUid: String? = null
     ) : AuthRepository {
 
-        private val state = MutableStateFlow<AuthState>(AuthState.Unauthenticated)
+        var state = MutableStateFlow<AuthState>(AuthState.Unauthenticated)
+            internal set
 
         var signInCalls = 0
             private set
@@ -272,8 +505,53 @@ class LoginViewModelTest {
             private set
         var lastSignIn: Pair<String, String>? = null
             private set
+        var signInAnonymouslyCalls = 0
+            private set
+        var promoteCalls = 0
+            private set
+        var lastPromotion: Pair<String, String>? = null
+            private set
+        var googleSignInCalls = 0
+            private set
+        var lastGoogleIdToken: String? = null
+            private set
+        /** Counts the DESTRUCTIVE switch, which must never happen without an explicit yes. */
+        var googleReplaceCalls = 0
+            private set
+        var lastGoogleReplaceIdToken: String? = null
+            private set
+        var uid: String? = null
+            internal set
 
         override val authState: Flow<AuthState> = state
+
+        // Real, and it MOVES. It is read twice around a session switch — before, to know which rows
+        // to re-key, and after, to know where they went — so a fake that always answered `null`
+        // would let a ViewModel that re-keys nothing pass every test here.
+        override val currentUid: String? get() = uid
+
+        override suspend fun signInAnonymously(): AppResult<Unit> {
+            signInAnonymouslyCalls++
+            if (signInAnonymouslyResult is AppResult.Success) {
+                // NOT Authenticated: an anonymous session has a real uid and Firestore access, but
+                // no permanent credential. Collapsing the two here would hide the exact distinction
+                // the three-state AuthState exists to express.
+                state.value = AuthState.Anonymous
+            }
+            return signInAnonymouslyResult
+        }
+
+        override suspend fun promoteToEmailAccount(
+            email: String,
+            password: String
+        ): AppResult<Unit> {
+            promoteCalls++
+            lastPromotion = email to password
+            if (promoteResult is AppResult.Success) {
+                state.value = AuthState.Authenticated
+            }
+            return promoteResult
+        }
 
         override suspend fun signIn(email: String, password: String): AppResult<Unit> {
             signInCalls++
@@ -296,6 +574,73 @@ class LoginViewModelTest {
             state.value = AuthState.Unauthenticated
             return AppResult.Success(Unit)
         }
+
+        /**
+         * A Google credential is a permanent credential, so a successful exchange lands on
+         * [AuthState.Authenticated] — same terminal state as email/password, and it is
+         * [AuthRepository.authState] that reports it, never this return value.
+         */
+        override suspend fun signInWithGoogle(idToken: String): AppResult<Unit> {
+            googleSignInCalls++
+            lastGoogleIdToken = idToken
+            // The uid is NOT touched: this is the link path, and linking keeps the same uid. The
+            // fake would be lying about the one fact the re-key decision reads.
+            if (googleSignInResult is AppResult.Success) {
+                state.value = AuthState.Authenticated
+            }
+            return googleSignInResult
+        }
+
+        /**
+         * The destructive switch, and the only thing that MOVES [currentUid] in this fake.
+         *
+         * Modelled as a distinct call from [signInWithGoogle] on purpose. In the real repository the
+         * difference is invisible to the caller — both return `Success` — and that invisibility is
+         * precisely what made the original defect possible, so the fake refuses to hide it.
+         */
+        override suspend fun signInWithGoogleReplacingSession(idToken: String): AppResult<Unit> {
+            googleReplaceCalls++
+            lastGoogleReplaceIdToken = idToken
+            if (googleReplaceResult is AppResult.Success) {
+                uid = googleReplaceUid
+                state.value = AuthState.Authenticated
+            }
+            return googleReplaceResult
+        }
+
+        override suspend fun signInWithGoogleOnly(idToken: String): AppResult<Unit> {
+            googleSignInCalls++
+            lastGoogleIdToken = idToken
+            if (googleSignInResult is AppResult.Success) {
+                state.value = AuthState.Authenticated
+            }
+            return googleSignInResult
+        }
+    }
+
+    /**
+     * Counts calls and remembers the last pair, which is all the ViewModel needs to be checked.
+     *
+     * A real [RoomSessionDataReassigner] is deliberately not used here: these tests are about the
+     * ORDER of the read-before / write-after pair, and ROOM's own behaviour is already pinned by
+     * `SessionDataReassignerTest` against a real database.
+     */
+    private class FakeSessionDataReassigner : SessionDataReassigner {
+        var calls = 0
+            private set
+        var lastPair: Pair<String, String>? = null
+            private set
+
+        override suspend fun reassign(fromUserId: String, toUserId: String): AppResult<Unit> {
+            calls++
+            lastPair = fromUserId to toUserId
+            return AppResult.Success(Unit)
+        }
+    }
+
+    private companion object {
+        const val ANON_UID = "anon-uid-1"
+        const val EXISTING_UID = "existing-uid-2"
     }
 }
 

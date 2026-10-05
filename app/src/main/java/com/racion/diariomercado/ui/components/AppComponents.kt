@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.racion.diariomercado.ui.theme.AuthHeroTheme
 
 /** Los 4 destinos de la barra inferior usados en toda la app. */
 enum class NavDestination(val label: String, val icon: ImageVector) {
@@ -141,11 +142,30 @@ fun OptionPill(text: String, selected: Boolean, onClick: () -> Unit, modifier: M
     }
 }
 
-/** Botón primario naranja de ancho completo. */
+/**
+ * Botón primario naranja de ancho completo.
+ *
+ * [isLoading] and [enabled] were added with the login screen's Google button and both default to
+ * the previous behaviour, so the six existing call sites compile untouched.
+ *
+ * The spinner REPLACES the label instead of sitting beside it: a button that keeps saying "Continuar"
+ * while it is already working invites the second tap, and that tap is a second sign-in attempt
+ * against the provider's per-account rate limit. The `enabled` argument stays available for the
+ * caller to disable the button for a reason that is not loading.
+ */
 @Composable
-fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun PrimaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    isLoading: Boolean = false
+) {
     Button(
         onClick = onClick,
+        // Disabled while loading, on top of whatever the caller asked for. Without the
+        // `!isLoading` term a caller that forgot it would open a second account sheet.
+        enabled = enabled && !isLoading,
         modifier = modifier
             .fillMaxWidth()
             .height(52.dp),
@@ -155,7 +175,94 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
             contentColor = MaterialTheme.colorScheme.onPrimary
         )
     ) {
-        Text(text, style = MaterialTheme.typography.titleLarge)
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onPrimary
+            )
+        } else {
+            Text(text, style = MaterialTheme.typography.titleLarge)
+        }
+    }
+}
+
+/**
+ * Una línea con el texto centrado: separa dos modos de ingreso sin pasar por una etiqueta de
+ * sección en mayúsculas, que aquí se leería como un encabezado.
+ *
+ * Both halves are the same `outlineVariant` at the same weight on purpose: a divider whose line is
+ * lighter than its text (or vice versa) makes the text look disabled, and "Ingresá con Google" is
+ * an invitation, not something greyed out.
+ */
+@Composable
+fun LabeledDivider(text: String, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 12.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
+    }
+}
+
+/**
+ * Bloque de cabecera con la identidad de la app, para las pantallas fuera de la barra inferior.
+ *
+ * ## Why it no longer uses the `inverseSurface` roles
+ * It used to paint `inverseSurface` with `inverseOnSurface` text, which is the textbook pairing
+ * for a dark card and rendered exactly that in light mode. It also rendered a **cream** card in
+ * dark mode, because M3 defines "inverse" as *inverted relative to the current scheme*. An anchor
+ * that changes colour with the system is not an anchor: on a dark phone the login screen stopped
+ * looking like the rest of the app.
+ *
+ * The colours now come from [AuthHeroTheme], which is explicitly per-scheme and never inverts.
+ * Light mode is unchanged (`#1C1A16` + cream); dark mode uses a lifted dark so the slab still
+ * reads as a distinct surface against the dark background. See [AuthHeroColors] for why one fixed
+ * value cannot serve both.
+ *
+ * This component declares no literal colour, which keeps the structural guarantee that the theme
+ * owns every hex in the app except the Google brand logo.
+ */
+@Composable
+fun AuthHeroBlock(
+    title: String,
+    subtitle: String,
+    modifier: Modifier = Modifier
+) {
+    val hero = AuthHeroTheme.current
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.extraLarge)
+            .background(hero.surface)
+            .padding(24.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineMedium,
+            color = hero.onSurface
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            // Dimmed rather than a second hardcoded colour: the same hue at lower alpha stays
+            // legible on both slabs without needing a per-scheme value for it.
+            color = hero.onSurface.copy(alpha = 0.72f)
+        )
     }
 }
 

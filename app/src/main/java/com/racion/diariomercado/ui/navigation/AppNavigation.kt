@@ -1,10 +1,11 @@
-package com.racion.diariomercado.ui.navigation
+﻿package com.racion.diariomercado.ui.navigation
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -20,6 +21,9 @@ import com.racion.diariomercado.domain.model.DiaryEntry
 import com.racion.diariomercado.domain.model.FoodProduct
 import com.racion.diariomercado.domain.model.MealSlot
 import com.racion.diariomercado.domain.model.Nutrition
+import com.racion.diariomercado.domain.model.UserProfile
+import com.racion.diariomercado.domain.repository.AuthRepository
+import com.racion.diariomercado.domain.repository.SessionDataReassigner
 import com.racion.diariomercado.ui.components.NavDestination
 import com.racion.diariomercado.ui.screens.AgregarScreen
 import com.racion.diariomercado.ui.screens.AvisoScreen
@@ -29,10 +33,15 @@ import com.racion.diariomercado.ui.screens.InformeScreen
 import com.racion.diariomercado.ui.screens.InicioScreen
 import com.racion.diariomercado.ui.screens.MetasScreen
 import com.racion.diariomercado.ui.screens.PerfilDeportivoScreen
+import com.racion.diariomercado.ui.screens.auth.GoogleSignInOutcome
 import com.racion.diariomercado.ui.screens.auth.LoginScreen
 import com.racion.diariomercado.ui.screens.auth.LoginViewModel
+import com.racion.diariomercado.ui.screens.auth.ProfileScreen
+import com.racion.diariomercado.ui.screens.auth.ProfileViewModel
 import com.racion.diariomercado.ui.screens.auth.RegisterScreen
+import com.racion.diariomercado.ui.screens.auth.rememberGoogleSignInLauncher
 import com.racion.diariomercado.ui.preview.PreviewData
+import kotlinx.coroutines.launch
 
 /** Rutas de navegación de la app como strings simples. */
 object Routes {
@@ -46,6 +55,8 @@ object Routes {
     const val AVISO = "aviso"
     const val LOGIN = "login"
     const val REGISTRO = "registro"
+    /** Account section: the three-state auth branch. See `ProfileScreen`. */
+    const val CUENTA = "cuenta"
 }
 
 /** Mapea un destino de la barra inferior a su ruta (null si no tiene pestaña). */
@@ -128,6 +139,12 @@ fun AppNavigation(
     val navController = rememberNavController()
     val navResult = remember { NavResult() }
 
+    // FF-5: the scope that carries the goals and profile writes launched from the screens below.
+    // It is tied to the composition, so a write in flight is cancelled if the graph goes away —
+    // which is the honest behaviour here, because there is no outbox for these two writes yet and
+    // the objects they carry are still held by the screens that produced them.
+    val scope = rememberCoroutineScope()
+
     fun selectTab(dest: NavDestination) {
         val route = dest.tabRoute() ?: return
         navController.navigate(route) {
@@ -182,15 +199,25 @@ fun AppNavigation(
             )
         }
         composable(Routes.PERFIL) {
+            val container = rememberAppContainer()
             MetasScreen(
                 onSave = { goals ->
-                    // TODO(FF-5): goalsRepository.saveGoals(goals)
+                    // FF-5: the write is launched and the screen moves on immediately, on purpose.
+                    // Blocking the navigation on a network round trip would hold the user on this
+                    // screen while the radio comes up, and the goals are already in the local
+                    // object the screen loaded from — nothing is lost if this is slow.
+                    //
+                    // The failure is not reported yet, and that is a real gap rather than an
+                    // oversight: there is no snackbar seam in this graph to report it through, and
+                    // inventing one is FF-7's block. Until then a dropped write is invisible, which
+                    // is why this comment marks the exact place the seam has to land.
+                    scope.launch { container.goalsRepository.saveGoals(goals) }
                     navController.navigate(Routes.INICIO) {
                         popUpTo(navController.graph.findStartDestination().id)
                         launchSingleTop = true
                     }
                 },
-                onOpenLogin = { navController.navigate(Routes.LOGIN) },
+                onOpenLogin = { navController.navigate(Routes.CUENTA) },
                 onNavigate = ::selectTab
             )
         }
@@ -226,9 +253,32 @@ fun AppNavigation(
             InformeScreen(onNavigate = ::selectTab)
         }
         composable(Routes.PERFIL_DEPORTIVO) {
+            val container = rememberAppContainer()
             PerfilDeportivoScreen(
                 onContinue = { focus ->
-                    // TODO(FF-5): profileRepository.saveProfile(...)
+                    // FF-5: same fire-and-forget shape as the goals save above, and the same
+                    // unreported-failure gap — see the note there before adding a second copy of
+                    // the workaround.
+                    //
+                    // `userId` is read from the session so it is not a placeholder, but
+                    // FirestoreProfileRepository ignores it on write: the document path is the
+                    // authoritative identity and the field is never stored (see
+                    // UserProfile.toProfileDocument). Passing a real value here keeps the object
+                    // honest for anything that reads it before the write lands.
+                    scope.launch {
+                        container.profileRepository.saveProfile(
+                            UserProfile(
+                                userId = container.authRepository.currentUid.orEmpty(),
+                                displayName = "",
+                                sportFocus = focus,
+                                // The screen collects no weight, so the domain default stands.
+                                // A later screen owns this field and will own its own value.
+                                // The id here is the placeholder the domain requires and nothing
+                                // reads: the write derives the real one from the document path.
+                                currentWeightKg = UserProfile(userId = "").currentWeightKg
+                            )
+                        )
+                    }
                     navController.navigate(Routes.PERFIL)
                 },
                 onNavigate = ::selectTab
@@ -246,21 +296,61 @@ fun AppNavigation(
             )
         }
 
-        // TODO(FF-4): FirebaseAuthRepository throws NotImplementedError for every command, so
-        // BOTH of these screens currently land on the "Ocurrió un error inesperado" branch. That
-        // is the expected behaviour of the skeleton, not a bug to work around here: when FF-4
-        // lands, this wiring needs no change at all.
-        composable(Routes.LOGIN) {
+        // FF-4: `FirebaseAuthRepository` is real now, so both of these screens reach the provider instead of
+// landing on a stub. Until the Anonymous / Email providers are enabled in the Firebase console
+// (J6), BOTH still end on the "Ocurrió un error inesperado" branch — that is the honest report of a
+// provider that rejects the call, not a wiring problem. No change is needed here when J6 lands.
+composable(Routes.LOGIN) {
             // Resolved here, NOT inside `initializer {}`. That block is a plain `() -> ViewModel`,
             // so a @Composable call in it does not compile — and hoisting it also means the
             // container is read once per composition instead of once per factory invocation.
-            val authRepository = rememberAppContainer().authRepository
+            val container = rememberAppContainer()
+            val authRepository = container.authRepository
+            // MANDATORY: the factory, NEVER `remember { LoginViewModel(...) }`. Both spellings
+            // compile, which is exactly why the wrong one is dangerous.
+            //
+            // `remember` scopes the ViewModel to the COMPOSITION. `viewModel()` scopes it to the
+            // `NavBackStackEntry`, which is the thing that actually represents "this destination".
+            // The difference is invisible until the pending Google sign-in is involved:
+            // `pendingGoogleIdToken` is a FIELD of the ViewModel (written when the chosen account
+            // already exists, read back on confirm). Leave this destination and the composition is
+            // disposed, the back stack entry keeps its saved state, and a brand new ViewModel is
+            // built with a `null` token. `onGoogleMergeConfirmed()` then returns on its
+            // `?: return`: the dialog closes, nothing happens, and the user is left on a spinner
+            // that no coroutine owns any more, because the previous `viewModelScope` was cancelled
+            // along with the composition. The account-existing path becomes unreachable and the
+            // failure is completely silent.
+            //
+            // This is not hypothetical — it shipped, and it is what "se queda creando sesión" was.
+            // `Routes.CUENTA` below always used the factory, which is why the identical flow worked
+            // there and failed only here.
             val viewModel: LoginViewModel = viewModel(
                 factory = viewModelFactory {
-                    initializer { LoginViewModel(authRepository) }
+                    initializer {
+                        LoginViewModel(authRepository, container.sessionDataReassigner)
+                    }
                 }
             )
             val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+            // The account picker needs an Activity context, so it cannot live in `LoginScreen`
+            // (which is stateless by design) nor in the repository (which takes no constructor
+            // argument on purpose). The graph owns the trigger, and the screen just reports the tap.
+            val googleSignInLauncher = rememberGoogleSignInLauncher(
+                onIdToken = viewModel::onGoogleSignIn,
+                onOutcome = { outcome ->
+                    when (outcome) {
+                        // A dismissal is silent by design.
+                        GoogleSignInOutcome.CANCELLED -> viewModel.onGoogleSignInCancelled()
+                        GoogleSignInOutcome.PROVIDER_UNAVAILABLE ->
+                            viewModel.onGoogleSignInProviderUnavailable()
+                        // FAILED reuses the blank-token branch on purpose: the sheet came back but
+                        // no readable token did, which is exactly what an empty token means. One
+                        // message, one code path, and the test asserts that no request is sent.
+                        GoogleSignInOutcome.FAILED -> viewModel.onGoogleSignIn("")
+                    }
+                }
+            )
 
             // The success branch pops the auth flow off the back stack rather than pushing
             // INICIO on top of it: otherwise the back gesture from "Inicio" would return to the
@@ -279,15 +369,27 @@ fun AppNavigation(
                 onEmailChange = viewModel::updateEmail,
                 onPasswordChange = viewModel::updatePassword,
                 onSignIn = viewModel::onSignIn,
+                // The flag goes up on the TAP, not when the token comes back: the window that needs
+                // the buttons disabled is the one where the account sheet is on screen, and by the
+                // time a token exists that window is already closed.
+                onGoogleSignIn = {
+                    viewModel.onGoogleSignInRequested()
+                    googleSignInLauncher()
+                },
                 onSignUpClick = { navController.navigate(Routes.REGISTRO) },
+                onGoogleMergeConfirmed = viewModel::onGoogleMergeConfirmed,
+                onGoogleMergeDismissed = viewModel::onGoogleMergeDismissed,
                 onErrorShown = viewModel::onErrorShown
             )
         }
-        composable(Routes.REGISTRO) {
-            val authRepository = rememberAppContainer().authRepository
+composable(Routes.REGISTRO) {
+            val container = rememberAppContainer()
+            val authRepository = container.authRepository
             val viewModel: LoginViewModel = viewModel(
                 factory = viewModelFactory {
-                    initializer { LoginViewModel(authRepository) }
+                    initializer {
+                        LoginViewModel(authRepository, container.sessionDataReassigner)
+                    }
                 }
             )
             val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -311,6 +413,78 @@ fun AppNavigation(
                 // popping returns to the already-composed login form with its fields intact
                 // instead of rebuilding it.
                 onBackToLogin = { navController.popBackStack() },
+                onErrorShown = viewModel::onErrorShown
+            )
+        }
+
+        /**
+         * The three-state account branch. Reached from the "Cuenta · Iniciar sesión" row on the
+         * Perfil tab ([Routes.PERFIL]).
+         *
+         * That row used to navigate straight to [Routes.LOGIN], which is wrong now that anonymous
+         * sign-in is the default entry point: most users have a session already, and the login form is
+         * only one of three things this destination can be. Routing it through here first is what lets
+         * the screen decide — an anonymous user gets "Reclamar tu cuenta", a signed-in one gets their
+         * identity, and only a user with NO session is sent on to the login form from inside
+         * [ProfileScreen]'s first branch.
+         *
+         * Note the label on that row still reads "Cuenta · Iniciar sesión" whatever the session is.
+         * Making it dynamic means branching on [com.racion.diariomercado.domain.repository.AuthState]
+         * inside `MetasScreen`, which is another contributor's file — see the TODO at
+         * `MetasScreen.kt:162`. Until then the label over-promises slightly for a signed-in user and
+         * the destination still does the right thing.
+         */
+        composable(Routes.CUENTA) {
+            // Same hoisting as LOGIN/REGISTRO: `initializer {}` is a plain `() -> ViewModel`, so a
+            // @Composable call inside it does not compile.
+            val container = rememberAppContainer()
+            val authRepository = container.authRepository
+            val viewModel: ProfileViewModel = viewModel(
+                factory = viewModelFactory {
+                    initializer {
+                        ProfileViewModel(authRepository, container.sessionDataReassigner)
+                    }
+                }
+            )
+            val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+            // Same launcher, same three-way outcome, as LOGIN — see the comment there for why the
+            // account picker lives in the graph rather than in the screen. What differs is the
+            // consequence, not the mechanism: LOGIN ends on a navigation, whereas here a success has
+            // to close the claim sheet and let `authState` re-render the whole `ProfileScreen`
+            // branch from Anonymous to Authenticated. Nothing to pop, because the user never left
+            // this destination.
+            val googleSignInLauncher = rememberGoogleSignInLauncher(
+                onIdToken = viewModel::onGoogleSignIn,
+                onOutcome = { outcome ->
+                    when (outcome) {
+                        GoogleSignInOutcome.CANCELLED -> viewModel.onGoogleSignInCancelled()
+                        GoogleSignInOutcome.PROVIDER_UNAVAILABLE ->
+                            viewModel.onGoogleSignInProviderUnavailable()
+                        GoogleSignInOutcome.FAILED -> viewModel.onGoogleSignIn("")
+                    }
+                }
+            )
+
+            ProfileScreen(
+                state = state,
+                onEmailChange = viewModel::updateEmail,
+                onPasswordChange = viewModel::updatePassword,
+                onShowClaimForm = viewModel::onShowClaimForm,
+                onDismissClaimForm = viewModel::onDismissClaimForm,
+                onClaimSubmit = viewModel::onClaimSubmit,
+                onClaimIntoExistingAccount = viewModel::onClaimIntoExistingAccount,
+                onSwitchClaimPath = viewModel::onSwitchClaimPath,
+                onGoogleSignInClick = googleSignInLauncher,
+                // Navigation, not a repository call: the login form is its own destination and
+                // `LoginViewModel` already owns the submit. This screen has no form for it.
+                onSignInClick = { navController.navigate(Routes.LOGIN) },
+                onRetrySignIn = viewModel::onRetryAnonymousSignIn,
+                onSignOutClick = viewModel::onSignOutClick,
+                onSignOutConfirmed = viewModel::onDestructiveSignOutConfirmed,
+                onSignOutDismissed = viewModel::onDestructiveSignOutDismissed,
+                onGoogleMergeConfirmed = viewModel::onGoogleMergeConfirmed,
+                onGoogleMergeDismissed = viewModel::onGoogleMergeDismissed,
                 onErrorShown = viewModel::onErrorShown
             )
         }

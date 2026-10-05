@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Google "G" mark, four-path brand colourway on a 24x24 viewport.
+
+    The four arcs keep Google's fixed colour assignment: blue on the top-right, red on the
+    top-left, yellow down the left, green along the bottom-right. That assignment is part of the
+    mark, not a styling choice, so none of these four colours may be swapped for a theme role.
+
+    This is the widely used vector form of the mark. If the app ever needs pixel-exact brand
+    compliance, the asset Google publishes at
+    https://developers.google.com/identity/gsi/web/button-guidelines is the authority and
+    replaces this file; nothing in the code depends on the path data, only on this resource name.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Top-right arc -->
+    <path
+        android:fillColor="#4285F4"
+        android:pathData="M23.49,12.27c0,-0.79 -0.07,-1.54 -0.19,-2.27H12v4.51h6.47c-0.28,1.49 -1.12,2.75 -2.38,3.59v2.77h3.86c2.26,-2.08 3.54,-5.15 3.54,-8.6z" />
+
+    <!-- Bottom-right arc -->
+    <path
+        android:fillColor="#34A853"
+        android:pathData="M12,24c3.24,0 5.95,-1.08 7.93,-2.91l-3.86,-2.77c-1.08,0.72 -2.45,1.16 -4.07,1.16 -3.13,0 -5.78,-2.11 -6.73,-4.96H1.28v3.04C3.25,21.29 7.3,24 12,24z" />
+
+    <!-- Left arc -->
+    <path
+        android:fillColor="#FBBC05"
+        android:pathData="M5.27,14.52c-0.24,-0.72 -0.38,-1.49 -0.38,-2.28s0.14,-1.56 0.38,-2.28V7.92H1.28C0.56,9.63 0,11.71 0,14.24s0.56,4.61 1.28,6.32l3.99,-3.04z" />
+
+    <!-- Top-left arc -->
+    <path
+        android:fillColor="#EA4335"
+        android:pathData="M12,4.75c1.77,0 3.35,0.61 4.6,1.8l3.42,-3.42C17.95,1.19 15.24,0 12,0 7.3,0 3.25,2.71 1.28,7.92l3.99,3.04C6.22,8.86 8.87,4.75 12,4.75z" />
+</vector>

@@ -20,4 +20,12 @@ interface GoalsRepository {
     fun observeGoals(): Flow<NutritionGoals>
 
     suspend fun saveGoals(goals: NutritionGoals): AppResult<Unit>
+
+    /**
+     * Ensures a goals document exists for the current user.
+     *
+     * Creates default goals if the document doesn't exist yet. Called on first sign-in
+     * for users who skip the onboarding flow.
+     */
+    suspend fun ensureGoalsExist(): AppResult<Unit>
 }

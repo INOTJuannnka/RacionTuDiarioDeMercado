@@ -34,4 +34,13 @@ interface ProfileRepository {
      * so it must arrive from cache rather than after a network round trip.
      */
     fun observeOnboardingCompleted(): Flow<Boolean>
+
+    /**
+     * Ensures a profile document exists for the current user.
+     *
+     * Creates a default profile if one doesn't exist yet. This is called after successful
+     * authentication for users who skip the onboarding flow (e.g., existing Google accounts).
+     * Returns success if the profile exists or was created, failure if the write fails.
+     */
+    suspend fun ensureProfileExists(): AppResult<Unit>
 }

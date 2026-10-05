@@ -102,24 +102,51 @@ internal class FirestoreGoalsRepository(
      * to defend against here: the document is a projection of the domain object, never a patch.
      */
     override suspend fun saveGoals(goals: NutritionGoals): AppResult<Unit> {
-        val ref = runCatching { goalsReference() }.getOrNull()
-            ?: return noSessionFailure("goals")
-
+        val uid = currentUid() ?: return noSessionFailure("goals")
+        val ref = firestore()
+            .collection(USERS)
+            .document(uid)
+            .collection(GOALS)
+            .document("main")
         return runFirestoreWrite {
             ref.set(goals.toGoalsDocument()).awaitTask()
         }
     }
 
     /**
-     * `users/{uid}/goals`, or `null` when there is no session.
+     * Ensures a goals document exists for the current user.
      *
-     * `runCatching` because the uid read and the `getInstance()` call are both outside the flow
-     * here and both can throw; the write path has to answer with a `Failure` rather than an
-     * exception either way.
+     * Creates default goals if the document doesn't exist yet. Called on first sign-in
+     * for users who skip the onboarding flow.
+     */
+    override suspend fun ensureGoalsExist(): AppResult<Unit> {
+        val uid = currentUid() ?: return noSessionFailure("goals")
+        val ref = firestore()
+            .collection(USERS)
+            .document(uid)
+            .collection(GOALS)
+            .document("main")
+
+        val snapshot = ref.get().awaitTask()
+        if (snapshot.exists()) {
+            return AppResult.Success(Unit)
+        }
+
+        return runFirestoreWrite {
+            ref.set(NutritionGoals().toGoalsDocument()).awaitTask()
+        }
+    }
+
+    /**
+     * `users/{uid}/goals/main`, or `null` when there is no session.
      */
     private fun goalsReference(): DocumentReference? {
         val uid = currentUid() ?: return null
-        return firestore().collection(USERS).document(uid).collection(USERS).document(GOALS)
+        return firestore()
+            .collection(USERS)
+            .document(uid)
+            .collection(GOALS)
+            .document("main")
     }
 
     private companion object {

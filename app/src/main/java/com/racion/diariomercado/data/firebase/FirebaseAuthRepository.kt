@@ -267,6 +267,19 @@ internal class FirebaseAuthRepository : AuthRepository {
         }
 
     /**
+     * [AuthRepository.signInWithGoogleOnly]. Direct sign-in without linking.
+     *
+     * Used for users who already have a Google account and want to sign in directly.
+     * Does not preserve any anonymous session data.
+     */
+    override suspend fun signInWithGoogleOnly(idToken: String): AppResult<Unit> =
+        runAuthCall {
+            firebaseAuth()
+                .signInWithCredential(GoogleAuthProvider.getCredential(idToken, null))
+                .awaitTask()
+        }
+
+    /**
      * Rewrites the generic "credential already attached elsewhere" result into the specific
      * "this Google account exists and you are anonymous" one.
      *

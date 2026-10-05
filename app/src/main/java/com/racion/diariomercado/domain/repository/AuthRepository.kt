@@ -285,6 +285,20 @@ interface AuthRepository {
     suspend fun signInWithGoogle(idToken: String): AppResult<Unit>
 
     /**
+     * Signs in with Google **directly**, without linking to any existing anonymous session.
+     *
+     * This is the primary entry point for users who already have a Google account.
+     * It does NOT preserve anonymous data — use this for fresh Google sign-ins.
+     *
+     * Returns [AppResult] of [Unit]: the session afterwards is read from [authState].
+     *
+     * Codes: `ERROR_INVALID_ID_TOKEN` / `ERROR_TOKEN_EXPIRED` (stale token),
+     * `ERROR_OPERATION_NOT_ALLOWED` / `ERROR_PROVIDER_NOT_ENABLED` (Google not enabled in console),
+     * `ERROR_NETWORK_REQUEST_FAILED`, `ERROR_TOO_MANY_REQUESTS`.
+     */
+    suspend fun signInWithGoogleOnly(idToken: String): AppResult<Unit>
+
+    /**
      * Creates a brand-new account, destroying any session the caller had.
      *
      * SUPERSEDED by [promoteToEmailAccount], which is the ratified way to obtain an email account

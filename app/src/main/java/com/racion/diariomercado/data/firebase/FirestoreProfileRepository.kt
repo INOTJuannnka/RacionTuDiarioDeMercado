@@ -90,43 +90,34 @@ internal class FirestoreProfileRepository(
      * that a merge would preserve and no patch to get wrong.
      */
     override suspend fun saveProfile(profile: UserProfile): AppResult<Unit> {
-        val ref = runCatching { profileReference() }.getOrNull()
-            ?: return noSessionFailure("the profile")
-
+        val uid = currentUid() ?: return noSessionFailure("the profile")
+        val ref = firestore()
+            .collection(USERS)
+            .document(uid)
+            .collection(PROFILE)
+            .document("main")
         return runFirestoreWrite {
             ref.set(profile.toProfileDocument()).awaitTask()
         }
     }
 
     /**
-     * Grants onboarding consent by writing `{ completed: true }` to its own subdocument.
+     * Marks the onboarding consent as accepted.
      *
-     * This deliberately writes **only** this flag. Nothing about saving a profile may grant or
-     * revoke consent, and nothing about granting consent may touch the profile — the two documents
-     * exist separately precisely so neither write can affect the other.
+     * Writes `{ completed: true }` to `users/{uid}/onboarding/completed`.
      */
     override suspend fun completeOnboarding(): AppResult<Unit> {
-        val ref = runCatching { onboardingReference() }.getOrNull()
-            ?: return noSessionFailure("the onboarding consent")
-
+        val ref = onboardingReference() ?: return noSessionFailure("onboarding consent")
         return runFirestoreWrite {
             ref.set(mapOf(COMPLETED to true)).awaitTask()
         }
     }
 
     /**
-     * Emits whether onboarding was already completed, defaulting to `false`.
+     * Emits whether onboarding was already completed.
      *
-     * ## Why the first emission must be fast
-     * The first emission decides the app's start route, so this flow is the one place where a slow
-     * first value shows up as a visible splash-screen stall. Firestore serves the listener from
-     * its local cache first and reconciles with the server afterwards, which is what makes that
-     * fast path work: `Source.DEFAULT` is deliberate, and forcing `Source.SERVER` here would buy
-     * freshness at the cost of a network round trip before the user sees anything.
-     *
-     * `false` is the fallback for every failure, and not only because the type is non-nullable:
-     * consent defaults to "not given", so a document that cannot be read must never be read as
-     * agreement.
+     * Listens to `users/{uid}/onboarding/completed` and parses the `completed` flag.
+     * If there is no session or a failure occurs, emits `false`.
      */
     override fun observeOnboardingCompleted(): Flow<Boolean> =
         flow {
@@ -137,7 +128,6 @@ internal class FirestoreProfileRepository(
             }
             emitAll(
                 ref.snapshots().map { snapshot ->
-                    // getData(), not data — see the note in observeProfile.
                     onboardingCompletedFromDocument(snapshot.getData())
                 }
             )
@@ -145,10 +135,46 @@ internal class FirestoreProfileRepository(
             .catch { emit(false) }
             .distinctUntilChanged()
 
-    /** `users/{uid}/profile`, or `null` when there is no session. */
+    /**
+     * Ensures a profile document exists for the current user.
+     *
+     * Reads the profile document; if it doesn't exist, creates a default profile with
+     * empty displayName, MANTENIMIENTO sport focus, and default weight. This handles users
+     * who sign in with existing Google accounts and skip the onboarding flow.
+     */
+    override suspend fun ensureProfileExists(): AppResult<Unit> {
+        val uid = currentUid() ?: return noSessionFailure("the profile")
+        val ref = firestore()
+            .collection(USERS)
+            .document(uid)
+            .collection(PROFILE)
+            .document("main")
+
+        val snapshot = ref.get().awaitTask()
+        if (snapshot.exists()) {
+            return AppResult.Success(Unit)
+        }
+
+        val defaultProfile = UserProfile(
+            userId = "",
+            displayName = "",
+            sportFocus = com.racion.diariomercado.domain.model.SportFocus.MANTENIMIENTO,
+            currentWeightKg = UserProfile(userId = "").currentWeightKg
+        )
+
+        return runFirestoreWrite {
+            ref.set(defaultProfile.toProfileDocument()).awaitTask()
+        }
+    }
+
+    /** `users/{uid}/profile/main`, or `null` when there is no session. */
     private fun profileReference(): DocumentReference? {
         val uid = currentUid() ?: return null
-        return firestore().collection(USERS).document(uid).collection(USERS).document(PROFILE)
+        return firestore()
+            .collection(USERS)
+            .document(uid)
+            .collection(PROFILE)
+            .document("main")
     }
 
     /** `users/{uid}/onboarding/completed`, or `null` when there is no session. */

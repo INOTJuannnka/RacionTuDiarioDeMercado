@@ -607,6 +607,15 @@ class LoginViewModelTest {
             }
             return googleReplaceResult
         }
+
+        override suspend fun signInWithGoogleOnly(idToken: String): AppResult<Unit> {
+            googleSignInCalls++
+            lastGoogleIdToken = idToken
+            if (googleSignInResult is AppResult.Success) {
+                state.value = AuthState.Authenticated
+            }
+            return googleSignInResult
+        }
     }
 
     /**

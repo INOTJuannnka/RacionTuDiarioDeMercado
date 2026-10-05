@@ -25,7 +25,8 @@ class MainActivity : ComponentActivity() {
         // composition, and the NavHost has to be keyed on the first emission, or the app will
         // flash "aviso" at an already-onboarded user.
         val prefs = getSharedPreferences("ration_prefs", Context.MODE_PRIVATE)
-        val startRoute = if (prefs.getBoolean("onboarding_done", false)) Routes.INICIO else Routes.AVISO
+        val onboardingDone = prefs.getBoolean("onboarding_done", false)
+        val startRoute = if (onboardingDone) Routes.LOGIN else Routes.AVISO
 
         setContent {
             NutriAppTheme {

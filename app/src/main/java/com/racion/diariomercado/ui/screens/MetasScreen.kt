@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.racion.diariomercado.domain.model.DayOfWeek
 import com.racion.diariomercado.domain.model.NutritionGoals
+import com.racion.diariomercado.domain.repository.AuthState
 import com.racion.diariomercado.ui.components.*
 import com.racion.diariomercado.ui.preview.PreviewData
 
@@ -27,17 +28,18 @@ import com.racion.diariomercado.ui.preview.PreviewData
  * reject. The edited values are held locally and handed back whole, in one object, on save —
  * never field by field.
  *
- * This composable is also what the "Perfil" tab renders, so it carries the one account affordance
- * of the skeleton (FF-4): [onOpenLogin]. It is nullable with a `null` default rather than a
- * required lambda so that previews and the existing call sites keep compiling without a
- * meaningless no-op, and so "no session UI wired yet" is expressed as an absent callback instead
- * of a button that navigates nowhere.
+ * This composable is also what the "Perfil" tab renders. It now observes [AuthState] to show
+ * the correct account affordance: sign-in for unauthenticated, claim for anonymous, profile for
+ * authenticated.
  */
 @Composable
 fun MetasScreen(
     goals: NutritionGoals = PreviewData.goals,
     onSave: (NutritionGoals) -> Unit = {},
+    authState: AuthState = AuthState.Unauthenticated,
     onOpenLogin: (() -> Unit)? = null,
+    onClaimAccount: (() -> Unit)? = null,
+    onSignOut: (() -> Unit)? = null,
     onNavigate: (NavDestination) -> Unit = {}
 ) {
     var weight by remember(goals) { mutableStateOf(goals.targetWeightKg) }
@@ -158,18 +160,65 @@ fun MetasScreen(
             )
             Spacer(Modifier.height(12.dp))
 
-            // TODO(FF-4): this row is the whole session surface of the skeleton. Once
-            // AuthRepository is real it must render the signed-in identity and a "Cerrar sesión"
-            // action instead, driven by AuthState — a static "Iniciar sesión" that stays visible
-            // to an authenticated user is worse than no affordance at all.
-            if (onOpenLogin != null) {
-                SectionLabel("CUENTA")
-                Spacer(Modifier.height(4.dp))
-                TextButton(
-                    onClick = onOpenLogin,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Cuenta · Iniciar sesión")
+            // Account section — branches on AuthState like ProfileScreen does
+            when (authState) {
+                AuthState.Unauthenticated -> {
+                    if (onOpenLogin != null) {
+                        SectionLabel("CUENTA")
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(
+                            onClick = onOpenLogin,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Cuenta · Iniciar sesión")
+                        }
+                    }
+                }
+                AuthState.Anonymous -> {
+                    SectionLabel("CUENTA")
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Tu diario se está guardando en este dispositivo como invitado.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    if (onClaimAccount != null) {
+                        PrimaryButton(
+                            text = "Reclamar tu cuenta",
+                            onClick = onClaimAccount
+                        )
+                    }
+                    if (onSignOut != null) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = onSignOut,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Cerrar sesión y borrar mis datos")
+                        }
+                    }
+                }
+                AuthState.Authenticated -> {
+                    SectionLabel("CUENTA")
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Sesión iniciada",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    if (onSignOut != null) {
+                        OutlinedButton(
+                            onClick = onSignOut,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Cerrar sesión")
+                        }
+                    }
                 }
             }
         }

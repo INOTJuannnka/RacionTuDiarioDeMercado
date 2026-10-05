@@ -23,6 +23,7 @@ import com.racion.diariomercado.domain.model.MealSlot
 import com.racion.diariomercado.domain.model.Nutrition
 import com.racion.diariomercado.domain.model.UserProfile
 import com.racion.diariomercado.domain.repository.AuthRepository
+import com.racion.diariomercado.domain.repository.AuthState
 import com.racion.diariomercado.domain.repository.SessionDataReassigner
 import com.racion.diariomercado.ui.components.NavDestination
 import com.racion.diariomercado.ui.screens.AgregarScreen
@@ -200,6 +201,9 @@ fun AppNavigation(
         }
         composable(Routes.PERFIL) {
             val container = rememberAppContainer()
+            val authState by container.authRepository.authState.collectAsStateWithLifecycle(
+                initialValue = AuthState.Unauthenticated
+            )
             MetasScreen(
                 onSave = { goals ->
                     // FF-5: the write is launched and the screen moves on immediately, on purpose.
@@ -217,7 +221,10 @@ fun AppNavigation(
                         launchSingleTop = true
                     }
                 },
+                authState = authState,
                 onOpenLogin = { navController.navigate(Routes.CUENTA) },
+                onClaimAccount = { navController.navigate(Routes.CUENTA) },
+                onSignOut = { scope.launch { container.authRepository.signOut() } },
                 onNavigate = ::selectTab
             )
         }
